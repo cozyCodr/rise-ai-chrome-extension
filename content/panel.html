@@ -1,0 +1,83 @@
+<template id="rise-ai-portrait-template">
+  <div class="panel">
+    <header class="panel__header">
+      <div class="panel__brand">
+        <span class="panel__brand-mark">Rise</span>
+        <span class="panel__brand-sub">Resume in Seconds</span>
+      </div>
+      <button class="panel__settings" data-action="open-settings" aria-label="Settings">
+        &#x2699;
+      </button>
+    </header>
+
+    <nav class="panel__tabs" role="tablist">
+      <button class="panel__tab" data-tab="setup" role="tab" aria-selected="true">Setup</button>
+      <button class="panel__tab" data-tab="job" role="tab" aria-selected="false">Job Description</button>
+      <button class="panel__tab" data-tab="history" role="tab" aria-selected="false">History</button>
+    </nav>
+
+    <section class="panel__section" data-panel="setup" role="tabpanel">
+      <p class="panel__status" data-slot="library-status">Select a qualifications folder to begin.</p>
+      <div class="panel__actions">
+        <button class="panel__button" data-action="pick-directory">Choose Folder</button>
+        <button class="panel__button panel__button--ghost" data-action="refresh-library">Refresh</button>
+      </div>
+      <div class="panel__docs">
+        <h4 class="panel__docs-title">Recent files</h4>
+        <ul class="panel__docs-list" data-slot="doc-list">
+          <li class="panel__docs-empty">No files detected.</li>
+        </ul>
+        <small class="panel__link" data-action="view-library">Manage library</small>
+      </div>
+    </section>
+
+    <section class="panel__section panel__section--hidden" data-panel="job" role="tabpanel" aria-hidden="true">
+      <p class="panel__status" data-slot="jd-summary">No job description captured yet.</p>
+      <p class="panel__hint" data-slot="selection-hint">Highlight text on the page or paste it below.</p>
+      <p class="panel__hint panel__hint--status" data-slot="generation-status"></p>
+      <form class="panel__form" data-action="submit-jd">
+        <textarea class="panel__textarea" data-slot="jd-input" placeholder="Paste the job description here..."></textarea>
+        <div class="panel__actions panel__actions--end">
+          <button type="button" class="panel__button panel__button--ghost" data-action="use-selection">Use Highlighted Text</button>
+          <button type="button" class="panel__button panel__button--ghost" data-action="generate-resume">Generate Resume</button>
+          <button type="submit" class="panel__button">Save Description</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel__section panel__section--hidden" data-panel="history" role="tabpanel" aria-hidden="true">
+      <div class="history-list" data-slot="history">
+        <p class="history-empty">Generate a resume to see it listed here.</p>
+      </div>
+      <div class="panel__actions panel__actions--end">
+        <button class="panel__link" data-action="view-history">Open full history</button>
+      </div>
+    </section>
+  </div>
+</template>
+
+<template id="rise-ai-preview-template">
+  <div class="preview-layer" data-preview-layer hidden>
+    <div class="preview-layer__scrim" data-action="close-preview"></div>
+    <section class="preview-overlay" data-overlay="preview" hidden>
+      <header class="preview-overlay__header">
+        <div>
+          <h2 class="preview-overlay__title" data-slot="preview-title">Resume Preview</h2>
+          <p class="preview-overlay__meta" data-slot="preview-meta"></p>
+        </div>
+        <div class="preview-overlay__actions">
+          <button class="preview-overlay__button" data-action="download-resume-pdf">Download PDF</button>
+          <button class="preview-overlay__button" data-action="download-resume-json">Download JSON</button>
+          <button class="preview-overlay__button" data-action="toggle-editing">Edit</button>
+          <button class="preview-overlay__button preview-overlay__button--ghost" data-action="close-preview">Close</button>
+        </div>
+      </header>
+      <div class="preview-overlay__loader" data-slot="preview-loader" hidden>
+        <div class="preview-loader__spinner" data-slot="preview-loader-spinner" aria-hidden="true"></div>
+        <p class="preview-loader__message" data-slot="preview-loader-message">Preparing your tailored resume...</p>
+      </div>
+      <div class="preview-overlay__content" data-slot="preview-content"></div>
+      <div class="preview-overlay__content preview-overlay__content--editor" data-slot="preview-editor" hidden></div>
+    </section>
+  </div>
+</template>

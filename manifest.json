@@ -1,0 +1,57 @@
+{
+    "manifest_version":  3,
+    "name":  "Rise AI",
+    "description":  "Rise AI light assistant for tailoring resumes from job descriptions.",
+    "version":  "0.2.0",
+    "background":  {
+        "service_worker":  "background.js",
+        "type":  "module"
+    },
+    "permissions":  [
+        "scripting",
+        "storage",
+        "downloads",
+        "activeTab",
+        "offscreen"
+    ],
+    "host_permissions":  [
+      "\u003call_urls\u003e"
+    ],
+    "web_accessible_resources":  [
+        {
+          "resources":  [
+            "content/panel.css",
+            "content/panel.html",
+            "content/page-bridge.js",
+            "content/panel-app.js",
+            "content/modules/*.js",
+            "content/lib/*",
+            "vendor/pdfjs/*"
+          ],
+          "matches":  [
+            "\u003call_urls\u003e"
+          ]
+        }
+    ],
+    "content_scripts":  [
+        {
+            "matches":  [
+                            "\u003call_urls\u003e"
+                        ],
+            "js":  [
+                        "content/bootstrap.js"
+                    ],
+            "css":  [
+                        "content/fab.css"
+                    ],
+            "run_at":  "document_idle"
+        }
+    ],
+    "action":  {
+      "default_title":  "Rise AI"
+    },
+    "trial_tokens":  [
+        "Axj5GM7XD8G/QiHMd5OMn7RUy9FUUITBJnvU2ec1q3z40iusiD6l7YokQeH4U3/peOdBmNgaFi1HQZTX/a5irA8AAACPeyJvcmlnaW4iOiJjaHJvbWUtZXh0ZW5zaW9uOi8vcGJjZWhkbWlha2lpamppbWlvbGhnaW9hbGVvcGdrbW0iLCJmZWF0dXJlIjoiQUlQcm9tcHRBUElNdWx0aW1vZGFsSW5wdXQiLCJleHBpcnkiOjE3NzQzMTA0MDAsImlzVGhpcmRQYXJ0eSI6dHJ1ZX0="
+    ]
+}
+

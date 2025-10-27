@@ -1,0 +1,37 @@
+.simple-editor-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.simple-editor-toolbar button {
+  border: 1px solid rgba(17, 17, 18, 0.12);
+  background: #f5f5f7;
+  color: #111214;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.simple-editor-toolbar button:hover {
+  background: #e6e7eb;
+}
+
+.simple-editor-toolbar button.is-active {
+  background: #111214;
+  color: #f8f8f9;
+  border-color: #111214;
+}
+
+.simple-editor-surface {
+  border: 1px solid rgba(17, 17, 18, 0.12);
+  border-radius: 12px;
+  padding: 16px;
+  background: #ffffff;
+  min-height: 420px;
+  overflow-y: auto;
+}
+
+.simple-editor-surface:focus {
+  outline: 2px solid rgba(79, 70, 229, 0.4);
+}
