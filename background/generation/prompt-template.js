@@ -7,7 +7,7 @@ const BASE_SYSTEM_PROMPT = `You are Rise AI, an on-device assistant that compose
 - Highlight measurable achievements when possible.
 - Stay truthful to the supplied context; never fabricate.
 - Treat the job description strictly as the target role -- never copy its responsibilities as the candidate's work history.
-- Keep the professional summary concise (2-3 sentences) and grounded in proven accomplishments from the context.
+- Keep the professional summary concise (no more than 2 sentences) and grounded in proven accomplishments from the context.
 - Prioritise experience, projects, and education details; present skills succinctly and avoid filler.`;
 
 const DUMMY_JOHN_DOE_CHUNKS = [
@@ -31,13 +31,25 @@ const DUMMY_JOHN_DOE_CHUNKS = [
 // Set to true to use dummy data for testing
 const USE_DUMMY_DATA = false;
 
+const MAX_CONTEXT_CHARS = 450;
+
+const cleanChunkText = (text) => {
+  const normalized = (text ?? "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  if (normalized.length <= MAX_CONTEXT_CHARS) return normalized;
+  return `${normalized.slice(0, MAX_CONTEXT_CHARS - 3).trimEnd()}...`;
+};
+
 const buildContextSummary = (chunks) =>
   chunks
-    .map(
-      (chunk, idx) =>
-        `Context #${idx + 1} (document: ${chunk.docId ?? "unknown"})\n${chunk.text}`
-    )
+    .map((chunk, idx) => {
+      const safeText = cleanChunkText(chunk.text);
+      return `Context #${idx + 1} (document: ${chunk.docId ?? "unknown"})\n${safeText}`;
+    })
     .join("\n\n");
+
+const composeUserPrompt = ({ jobText, chunks, instructions }) =>
+  `JOB DESCRIPTION (target role, do not copy verbatim):\n${jobText}\n\nQUALIFICATION CONTEXT (candidate evidence):\n${buildContextSummary(chunks)}${instructions}`;
 
 export const buildResumePrompt = async ({ chunkLimit = 12 } = {}) => {
   const [job, context] = await Promise.all([getJobState(), getContextState()]);
@@ -63,6 +75,7 @@ JSON schema:
 Section expectations:
 - summary: content is an array of paragraphs (strings).
 - experience: content is an array of objects { title, company?, location?, dates?, bullets[] }.
+- projects: content is an array of objects { title, description?, impact?, link?, dates? }.
 - skills: content is an array of strings.
 - education: content is an array of objects { degree?, institution?, dates?, highlights? }.`;
 
@@ -71,8 +84,8 @@ Section expectations:
 
 INSTRUCTIONS:
 1. Job description is for alignment only. Do not present it as part of the candidate's prior roles.
-2. Summary must contain 2-3 sentences that highlight quantified wins backed by the context snippets.
-3. Experience entries must reference real employers, roles, and outcomes drawn from the context. Rephrase but never invent facts.
+2. Summary must contain no more than 2 sentences (ideally exactly 2) that highlight quantified wins backed by the context snippets.
+3. Experience entries must reference real employers, roles, and outcomes drawn from the context; keep standalone project work in the projects section instead of experience.
 4. Add a "projects" section when the context mentions notable initiatives, using objects { title, description, impact? }. Omit the section if no projects exist.
 5. Skills should be a concise list of up to 10 items derived from the context and relevant to the job description.
 6. Education should capture degrees, institutions, dates, and honours exactly as provided in the context.
@@ -115,16 +128,35 @@ INSTRUCTIONS:
     }
   }
 
-  const userPrompt = `JOB DESCRIPTION (target role, do not copy verbatim):\n${job.text}\n\nQUALIFICATION CONTEXT (candidate evidence):\n${buildContextSummary(relevantChunks)}${instructions}`;
+  let selectedChunks = [...relevantChunks];
+  let userPrompt = composeUserPrompt({ jobText: job.text, chunks: selectedChunks, instructions });
 
-  // Final token validation
-  const tokenCount = calculatePromptTokens({ systemPrompt, userPrompt });
+  // Final token validation with adaptive chunk trimming
+  let tokenCount = calculatePromptTokens({ systemPrompt, userPrompt });
+
+  while (
+    tokenCount.total > GEMINI_NANO_LIMITS.PER_PROMPT &&
+    selectedChunks.length > 1
+  ) {
+    selectedChunks = selectedChunks.slice(0, -1);
+    userPrompt = composeUserPrompt({ jobText: job.text, chunks: selectedChunks, instructions });
+    tokenCount = calculatePromptTokens({ systemPrompt, userPrompt });
+    console.warn("[RiseAI] Prompt tokens above limit, dropping last context chunk", {
+      remainingChunks: selectedChunks.length,
+      tokens: tokenCount.total,
+      limit: GEMINI_NANO_LIMITS.PER_PROMPT,
+    });
+  }
+
+  if (!selectedChunks.length) {
+    throw new Error("Unable to compose prompt within token limits. Try removing large context files and retry.");
+  }
 
   console.log("[RiseAI] Final prompt tokens:", {
     system: tokenCount.systemTokens,
     user: tokenCount.userTokens,
     total: tokenCount.total,
-    chunksUsed: relevantChunks.length,
+    chunksUsed: selectedChunks.length,
     underLimit: tokenCount.total <= GEMINI_NANO_LIMITS.PER_PROMPT,
   });
 
@@ -142,9 +174,9 @@ INSTRUCTIONS:
     metadata: {
       job,
       context,
-      chunkIds: relevantChunks.map((chunk) => chunk.id),
+      chunkIds: selectedChunks.map((chunk) => chunk.id),
       tokenCount,
-      chunksUsed: relevantChunks.length,
+      chunksUsed: selectedChunks.length,
       chunksRequested: chunkLimit,
     },
   };

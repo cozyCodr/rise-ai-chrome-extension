@@ -243,31 +243,14 @@ const sendRuntimeMessage = (type, payload) =>
   });
 
 export const GeminiBridge = {
-  async generateResume(payload, { onChunk } = {}) {
-    const requestId = `resume-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-    const enrichedPayload = { ...(payload || {}), requestId };
+  async generateResume(payload) {
     console.info("[RiseAI] GeminiBridge.generateResume", {
-      chunkLimit: enrichedPayload?.chunkLimit,
-      temperature: enrichedPayload?.temperature,
-      topK: enrichedPayload?.topK,
-      requestId,
+      chunkLimit: payload?.chunkLimit,
+      temperature: payload?.temperature,
+      topK: payload?.topK,
     });
-    let listener = null;
-    if (typeof onChunk === "function") {
-      listener = (message) => {
-        if (message?.type !== "rise:gemini:stream") return;
-        const chunk = message.payload || {};
-        if (chunk.requestId !== requestId) return;
-        try {
-          onChunk(chunk);
-        } catch (error) {
-          console.warn("[RiseAI] GeminiBridge chunk listener error", error);
-        }
-      };
-      chrome.runtime.onMessage.addListener(listener);
-    }
     try {
-      const response = await sendRuntimeMessage("rise:generator:resume", enrichedPayload);
+      const response = await sendRuntimeMessage("rise:generator:resume", payload);
       console.info("[RiseAI] GeminiBridge.generateResume response", {
         hasResume: !!response?.payload?.resume,
         finishReason: response?.payload?.metadata?.finishReason ?? null,
@@ -276,10 +259,6 @@ export const GeminiBridge = {
     } catch (error) {
       console.error("[RiseAI] GeminiBridge.generateResume error", error);
       throw error;
-    } finally {
-      if (listener) {
-        chrome.runtime.onMessage.removeListener(listener);
-      }
     }
   },
 };

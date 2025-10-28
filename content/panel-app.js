@@ -132,6 +132,7 @@ class PanelApp {
       this.previewOverlay,
       this.jobBadge
     );
+    this.wasPanelOpenBeforePreview = false;
 
     this.tabs = Array.from(wrapper.querySelectorAll("[data-tab]"));
     this.panels = Array.from(wrapper.querySelectorAll("[data-panel]"));
@@ -340,14 +341,21 @@ class PanelApp {
       this.jobController.focusTextarea();
       return null;
     }
-    this.jobBadge.set("Saving job description...", "info");
     if (this.generateButton) {
       this.generateButton.disabled = true;
       this.generateButton.setAttribute("data-busy", "true");
     }
+    this.jobBadge.set("Generating resume with Gemini Nano...", "info");
+
+    const panelWasOpen = this.panelOpen;
+    this.wasPanelOpenBeforePreview = panelWasOpen;
+    if (panelWasOpen) {
+      this.closePanel();
+    }
+    this.previewOverlay.showLoading("Generating a tailored resume with Gemini Nano...");
 
     try {
-      const response = await GeminiBridge.generateResume({ chunkLimit: 6 });
+      const response = await GeminiBridge.generateResume({ chunkLimit: 12, temperature: 0.45 });
       const result = response.payload ?? {};
 
       if (!result?.rawText && !result?.resume) {
@@ -439,9 +447,11 @@ class PanelApp {
       timestamp: new Date().toISOString(),
     });
 
-    this.openPanel();
-    this.switchTab("history");
-    this.setPanelState(this.panelStates.LANDSCAPE);
+    const panelWasOpen = this.panelOpen;
+    this.wasPanelOpenBeforePreview = panelWasOpen;
+    if (panelWasOpen) {
+      this.closePanel();
+    }
     this.previewOverlay.showLoading("Generating a tailored resume with Gemini Nano...");
     this.jobBadge.set("Generating resume with Gemini Nano...", "info");
 
@@ -451,34 +461,7 @@ class PanelApp {
     }
 
     try {
-      const streamState = {
-        started: false,
-        aggregatedText: "",
-      };
-      const response = await GeminiBridge.generateResume(
-        { chunkLimit: 12 },
-        {
-          onChunk: (chunk) => {
-            const incoming =
-              typeof chunk?.aggregatedText === "string" && chunk.aggregatedText
-                ? chunk.aggregatedText
-                : typeof chunk?.chunkText === "string"
-                ? streamState.aggregatedText + chunk.chunkText
-                : streamState.aggregatedText;
-            if (incoming && incoming !== streamState.aggregatedText) {
-              streamState.aggregatedText = incoming;
-              if (!streamState.started) {
-                this.previewOverlay.beginStreaming("Generating with Gemini Nano...");
-                streamState.started = true;
-              }
-              this.previewOverlay.updateStreaming(streamState.aggregatedText);
-              const charCount = streamState.aggregatedText.length;
-              this.jobBadge.set(`Generating resume draft... ${charCount} chars`, "info");
-            }
-          },
-        }
-      );
-      this.previewOverlay.endStreaming();
+      const response = await GeminiBridge.generateResume({ chunkLimit: 12, temperature: 0.45 });
       const result = response.payload ?? {};
 
       if (!result?.rawText && !result?.resume) {
@@ -512,7 +495,6 @@ class PanelApp {
       this.previewOverlay.open(saved);
       this.jobBadge.set("Resume ready.", "success");
     } catch (error) {
-      this.previewOverlay.endStreaming();
       console.error("[RiseAI] resume generation failed", error);
       const message = typeof error?.message === "string" ? error.message : "Resume generation failed.";
       if (message.includes("No qualification context available")) {
@@ -572,9 +554,13 @@ class PanelApp {
 
   handleClosePreview() {
     this.previewOverlay.close();
-    if (this.panelOpen) {
+    if (this.wasPanelOpenBeforePreview) {
+      this.openPanel();
       this.setPanelState(this.panelStates.PORTRAIT);
+    } else {
+      this.setPanelState(this.panelStates.CLOSED);
     }
+    this.wasPanelOpenBeforePreview = false;
     this.jobBadge.set("Preview closed.", "info");
   }
 
@@ -583,6 +569,11 @@ class PanelApp {
     if (!card) return;
     const entry = this.history.getById(card.dataset.resumeId);
     if (entry) {
+      const panelWasOpen = this.panelOpen;
+      this.wasPanelOpenBeforePreview = panelWasOpen;
+      if (panelWasOpen) {
+        this.closePanel();
+      }
       this.previewOverlay.open(entry);
     }
   }

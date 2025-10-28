@@ -24,13 +24,30 @@ const ensureArray = (value) => {
   return [value];
 };
 
+const MAX_SUMMARY_SENTENCES = 2;
+
+const extractSentences = (text = "") => {
+  if (typeof text !== "string") return [];
+  return (text.match(/[^.!?]+[.!?]*/g) || [])
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+};
+
 const renderSummarySection = (section) => {
-  const paragraphs = ensureArray(section.content).map((paragraph) => escapeHtml(`${paragraph}`));
-  if (!paragraphs.length) return "";
+  const sentences = [];
+  ensureArray(section.content).forEach((paragraph) => {
+    extractSentences(`${paragraph}`).forEach((sentence) => {
+      if (sentences.length < MAX_SUMMARY_SENTENCES) {
+        sentences.push(sentence);
+      }
+    });
+  });
+  if (!sentences.length) return "";
+  const summaryText = sentences.slice(0, MAX_SUMMARY_SENTENCES).join(" ").trim();
   return `
     <section class="preview-section">
       <h3 class="preview-section__title">${escapeHtml(section.title ?? "Summary")}</h3>
-      ${paragraphs.map((text) => `<p class="preview-section__paragraph">${text}</p>`).join("")}
+      <p class="preview-section__paragraph">${escapeHtml(summaryText)}</p>
     </section>
   `;
 };
@@ -71,6 +88,57 @@ const renderExperienceSection = (section) => {
     <section class="preview-section preview-section--experience">
       <h3 class="preview-section__title">${escapeHtml(section.title ?? "Experience")}</h3>
       <div class="preview-experience">
+        ${markup}
+      </div>
+    </section>
+  `;
+};
+
+const renderProjectsSection = (section) => {
+  const projects = ensureArray(section.content);
+  if (!projects.length) return "";
+  const markup = projects
+    .map((project) => {
+      const title = escapeHtml(project.title ?? "Project");
+      const subtitleParts = [];
+      if (project.role) subtitleParts.push(escapeHtml(project.role));
+      if (project.dates || project.timeline || project.period) {
+        subtitleParts.push(
+          escapeHtml(project.dates ?? project.timeline ?? project.period)
+        );
+      }
+      const description = project.description
+        ? `<p class="preview-project__description">${escapeHtml(`${project.description}`)}</p>`
+        : "";
+      const impactList = ensureArray(
+        project.impact ?? project.highlights ?? project.results ?? project.bullets
+      )
+        .filter((item) => item && `${item}`.trim() !== "")
+        .map((item) => `<li>${escapeHtml(`${item}`)}</li>`)
+        .join("");
+      const link =
+        project.url || project.link
+          ? `<a class="preview-project__link" href="${escapeHtml(
+              project.url ?? project.link
+            )}" target="_blank" rel="noopener">View project</a>`
+          : "";
+      return `
+        <article class="preview-project__item">
+          <header class="preview-project__header">
+            <span class="preview-project__title">${title}</span>
+            ${subtitleParts.length ? `<span class="preview-project__meta">${subtitleParts.join(" | ")}</span>` : ""}
+          </header>
+          ${description}
+          ${impactList ? `<ul class="preview-project__impact">${impactList}</ul>` : ""}
+          ${link}
+        </article>
+      `;
+    })
+    .join("");
+  return `
+    <section class="preview-section preview-section--projects">
+      <h3 class="preview-section__title">${escapeHtml(section.title ?? "Projects")}</h3>
+      <div class="preview-projects">
         ${markup}
       </div>
     </section>
@@ -122,15 +190,24 @@ const renderEducationSection = (section) => {
   `;
 };
 
+const renderGenericContent = (value) => {
+  if (value === null || typeof value === "undefined") return "";
+  if (Array.isArray(value)) {
+    return value.map((item) => renderGenericContent(item)).join("");
+  }
+  if (typeof value === "object") {
+    return `<pre class="preview-section__json">${escapeHtml(JSON.stringify(value, null, 2))}</pre>`;
+  }
+  return `<p class="preview-section__paragraph">${escapeHtml(`${value}`)}</p>`;
+};
+
 const renderGenericSection = (section) => {
   const title = escapeHtml(section.title ?? "Additional");
-  const content = Array.isArray(section.content)
-    ? section.content.map((line) => `<p class="preview-section__paragraph">${escapeHtml(`${line}`)}</p>`).join("")
-    : `<p class="preview-section__paragraph">${escapeHtml(`${section.content ?? ""}`)}</p>`;
+  const contentHtml = renderGenericContent(section.content);
   return `
     <section class="preview-section">
       <h3 class="preview-section__title">${title}</h3>
-      ${content}
+      ${contentHtml}
     </section>
   `;
 };
@@ -149,6 +226,7 @@ export const buildResumeSectionsHtml = (resume) => {
       const id = (section.id || "").toLowerCase();
       if (id === "summary") return renderSummarySection(section);
       if (id === "experience") return renderExperienceSection(section);
+      if (id === "projects") return renderProjectsSection(section);
       if (id === "skills") return renderSkillSection(section);
       if (id === "education") return renderEducationSection(section);
       return renderGenericSection(section);
@@ -462,7 +540,6 @@ export class PreviewOverlay {
     this.editing = false;
     this.editorInstance = null;
     this.editorModule = null;
-    this.streamingPreEl = null;
   }
 
   async ensureEditorModule() {
@@ -481,7 +558,6 @@ export class PreviewOverlay {
 
   open(entry) {
     this.currentEntry = entry;
-    this.streamingPreEl = null;
     if (!this.overlay || !this.titleEl || !this.metaEl || !this.contentEl) return;
     if (this.layer) {
       this.layer.hidden = false;
@@ -524,7 +600,6 @@ export class PreviewOverlay {
     this.editing = false;
     this.editorInstance = null;
     this.currentEntry = null;
-    this.streamingPreEl = null;
   }
 
   async toggleEditing() {
@@ -586,32 +661,6 @@ export class PreviewOverlay {
     }
     this.currentEntry = null;
     this.editing = false;
-    this.streamingPreEl = null;
-  }
-
-  beginStreaming(message = "Generating with Gemini...") {
-    if (this.loaderMessageEl) {
-      this.loaderMessageEl.textContent = message;
-    }
-    if (this.loaderSpinnerEl) {
-      this.loaderSpinnerEl.hidden = false;
-    }
-    if (this.contentEl) {
-      this.contentEl.style.display = "";
-      this.contentEl.innerHTML =
-        '<pre class="rise-ai-stream-output" style="max-height:320px;overflow:auto;white-space:pre-wrap;"></pre>';
-      this.streamingPreEl = this.contentEl.querySelector(".rise-ai-stream-output");
-    }
-  }
-
-  updateStreaming(text = "") {
-    if (this.streamingPreEl) {
-      this.streamingPreEl.textContent = text;
-    }
-  }
-
-  endStreaming() {
-    this.streamingPreEl = null;
   }
 
   showMessage({ title = "Rise AI", body = "", tone = "info" } = {}) {
@@ -637,7 +686,6 @@ export class PreviewOverlay {
       this.editorContainer.innerHTML = "";
     }
     this.statusBadge.set(body, tone);
-    this.streamingPreEl = null;
   }
 
   extractSummaryTitle(entry) {
@@ -784,10 +832,3 @@ export class ResumeHistory {
     return this.entryIndex.get(id) || null;
   }
 }
-
-
-
-
-
-
-

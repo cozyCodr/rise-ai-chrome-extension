@@ -11,7 +11,9 @@ const waitForOffscreenReady = async () => {
 };
 const ensureOffscreenDocument = async () => {
   if (!chrome.offscreen?.createDocument) {
-    throw new Error("Offscreen documents are unavailable in this Chrome build.");
+    throw new Error(
+      "Offscreen documents are unavailable in this Chrome build."
+    );
   }
   const hasDoc = (await chrome.offscreen.hasDocument?.()) || false;
   if (hasDoc) return;
@@ -30,7 +32,9 @@ const sendOffscreenMessage = (type, payload, attempt = 0) =>
         const msg = chrome.runtime.lastError.message || "";
         if (attempt < 10 && msg.includes("Receiving end does not exist")) {
           setTimeout(() => {
-            sendOffscreenMessage(type, payload, attempt + 1).then(resolve).catch(reject);
+            sendOffscreenMessage(type, payload, attempt + 1)
+              .then(resolve)
+              .catch(reject);
           }, 150 * (attempt + 1));
           return;
         }
@@ -47,28 +51,9 @@ const sendOffscreenMessage = (type, payload, attempt = 0) =>
 
 export const ensureOffscreen = () => ensureOffscreenDocument();
 
-export const generateViaOffscreen = async (payload = {}, options = {}) => {
+export const generateViaOffscreen = async (payload = {}) => {
   await ensureOffscreenDocument();
-  let listener = null;
-  if (typeof options.onChunk === "function" && payload.requestId) {
-    listener = (message) => {
-      if (message?.type !== "offscreen:prompt:chunk") return;
-      if (!message.payload || message.payload.requestId !== payload.requestId) return;
-      try {
-        options.onChunk(message.payload);
-      } catch (error) {
-        console.warn("[RiseAI] onChunk handler failed", error);
-      }
-    };
-    chrome.runtime.onMessage.addListener(listener);
-  }
-  try {
-    return await sendOffscreenMessage("offscreen:prompt:generate", payload);
-  } finally {
-    if (listener) {
-      chrome.runtime.onMessage.removeListener(listener);
-    }
-  }
+  return sendOffscreenMessage("offscreen:prompt:generate", payload);
 };
 
 export const resetOffscreenSession = async () => {
@@ -80,9 +65,3 @@ export const availabilityViaOffscreen = async (payload) => {
   await ensureOffscreenDocument();
   return sendOffscreenMessage("offscreen:prompt:availability", payload);
 };
-
-
-
-
-
-

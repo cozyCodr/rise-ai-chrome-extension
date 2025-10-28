@@ -187,23 +187,7 @@ const parseResumeJson = (text = "") => {
   }
 };
 
-registerHandler("rise:generator:resume", async (payload = {}, sender) => {
-  const requestId =
-    typeof payload.requestId === "string" && payload.requestId
-      ? payload.requestId
-      : `resume-${crypto?.randomUUID?.() || Date.now()}`;
-  const targetTabId = sender?.tab?.id;
-  const forwardStreamChunk = (chunk) => {
-    if (!targetTabId) return;
-    notifyTab(targetTabId, {
-      type: "rise:gemini:stream",
-      payload: {
-        requestId,
-        ...chunk,
-      },
-    });
-  };
-
+registerHandler("rise:generator:resume", async (payload = {}) => {
   const baseChunkLimit = payload.chunkLimit ?? 6;
   const attemptedLimits = [];
   let lastError = null;
@@ -222,15 +206,14 @@ registerHandler("rise:generator:resume", async (payload = {}, sender) => {
 
       const prompt = await buildResumePrompt({ chunkLimit: currentLimit });
       const generation = await generateViaOffscreen({
-        requestId,
         options: {
           systemPrompt: prompt.systemPrompt,
-          temperature: payload.temperature ?? 0.65,
+          temperature: payload.temperature ?? 0.45,
           topK: payload.topK ?? 40,
         },
         messages: Array.isArray(payload.messages) ? payload.messages : [],
         prompt: prompt.userPrompt,
-      }, { onChunk: forwardStreamChunk });
+      });
 
       if (!generation?.text) {
         console.warn("[RiseAI] Gemini returned empty text", {

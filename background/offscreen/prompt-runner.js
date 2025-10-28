@@ -161,65 +161,10 @@
 
         console.log("[RiseAI Offscreen] Total prompt length:", userText.length, "chars (~" + Math.ceil(userText.length / 4) + " tokens)");
 
-        let aggregatedText = "";
-        let finishReason = "unknown";
-        let usage = null;
-        const requestId = payload.requestId || null;
-
-        const emitChunk = (chunkData) => {
-          if (!requestId) return;
-          try {
-            chrome.runtime.sendMessage({
-              type: "offscreen:prompt:chunk",
-              payload: {
-                requestId,
-                ...chunkData,
-              },
-            });
-          } catch (chunkError) {
-            console.warn("[RiseAI Offscreen] Failed to emit chunk update", chunkError);
-          }
-        };
-
-        if (typeof session.promptStreaming === "function") {
-          console.log("[RiseAI Offscreen] Using promptStreaming()");
-          const stream = session.promptStreaming(userText);
-          // eslint-disable-next-line no-restricted-syntax
-          for await (const chunk of stream) {
-            const piece = unwrapResponseText(chunk);
-            if (piece) {
-              aggregatedText += piece;
-            }
-            if (chunk?.finishReason) {
-              finishReason = chunk.finishReason;
-            }
-            if (chunk?.usage) {
-              usage = chunk.usage;
-            }
-            if (piece || chunk?.finishReason) {
-              emitChunk({
-                chunkText: piece ?? "",
-                aggregatedText,
-                finishReason: chunk?.finishReason ?? null,
-                usage: chunk?.usage ?? null,
-              });
-            }
-          }
-        }
-
-        if (!aggregatedText) {
-          console.log("[RiseAI Offscreen] Falling back to prompt() to retrieve response text");
-          const response = await session.prompt(userText);
-          aggregatedText = unwrapResponseText(response);
-          finishReason = response?.finishReason ?? finishReason;
-          usage = response?.usage ?? usage;
-          emitChunk({
-            chunkText: aggregatedText,
-            aggregatedText,
-            finishReason,
-            usage,
-          });
-        }
+        const response = await session.prompt(userText);
+        const aggregatedText = unwrapResponseText(response);
+        const finishReason = response?.finishReason ?? "unknown";
+        const usage = response?.usage ?? null;
 
         console.log("[RiseAI Offscreen] Response received, length:", aggregatedText.length);
         return {
