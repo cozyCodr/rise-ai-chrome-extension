@@ -2,11 +2,13 @@ import {
   SelectionTracker,
   GeminiBridge,
   Preferences,
+  ProfileStore,
   runtimeApi,
 } from "./modules/data.js";
 import {
   StatusBadge,
-  ContextLibrary,
+  ProfileManager,
+  ProfileOverlay,
   JobController,
   PreviewOverlay,
   ResumeHistory,
@@ -17,8 +19,8 @@ const uiSelectors = {
   textarea: '[data-slot="jd-input"]',
   selectionHint: '[data-slot="selection-hint"]',
   jobStatus: '[data-slot="generation-status"]',
-  contextStatus: '[data-slot="library-status"]',
-  docList: '[data-slot="doc-list"]',
+  profileStatus: '[data-slot="profile-status"]',
+  profileSummary: '[data-slot="profile-summary"]',
   historyList: '[data-slot="history"]',
   previewOverlay: '[data-overlay="preview"]',
   previewTitle: '[data-slot="preview-title"]',
@@ -28,8 +30,7 @@ const uiSelectors = {
   previewLoader: '[data-slot="preview-loader"]',
   previewLoaderSpinner: '[data-slot="preview-loader-spinner"]',
   previewLoaderMessage: '[data-slot="preview-loader-message"]',
-  pickDirectoryBtn: '[data-action="pick-directory"]',
-  refreshBtn: '[data-action="refresh-library"]',
+  openProfileBtn: '[data-action="open-profile-editor"]',
   useSelectionBtn: '[data-action="use-selection"]',
   generateBtn: '[data-action="generate-resume"]',
   downloadJsonBtn: '[data-action="download-resume-json"]',
@@ -39,69 +40,47 @@ const uiSelectors = {
   jobForm: '[data-action="submit-jd"]',
 };
 
-const statusLabels = {
-  pending: "awaiting scan",
-  refreshing: "refreshing...",
-  scanning: "scanning...",
-  ready: "ready",
-  error: "error",
-};
-
-const summarizeContext = (context) => {
-  if (!context) {
-    return "No context folder selected yet.";
-  }
-  const parts = [];
-  if (context.name) {
-    parts.push(context.name);
-  }
-  const pdfFiles = typeof context.pdfFiles === "number" ? context.pdfFiles : undefined;
-  const totalFiles = typeof context.totalFiles === "number" ? context.totalFiles : undefined;
-  if (typeof pdfFiles === "number") {
-    parts.push(
-      pdfFiles === 0 ? "no PDFs indexed yet" : `${pdfFiles} PDF${pdfFiles === 1 ? "" : "s"} indexed`
-    );
-  } else if (typeof totalFiles === "number") {
-    parts.push(
-      totalFiles === 0 ? "no files indexed yet" : `${totalFiles} file${totalFiles === 1 ? "" : "s"} indexed`
-    );
-  }
-  if (typeof context.chunkCount === "number" && context.chunkCount > 0) {
-    parts.push(`${context.chunkCount} chunk${context.chunkCount === 1 ? "" : "s"}`);
-  }
-  if (context.status && statusLabels[context.status]) {
-    parts.push(statusLabels[context.status]);
-  }
-  if (context.lastRefreshedAt) {
-    const date = new Date(context.lastRefreshedAt);
-    if (!Number.isNaN(date.getTime())) {
-      parts.push(`refreshed ${date.toLocaleString()}`);
-    }
-  }
-  return parts.join(" | ");
-};
 
 class PanelApp {
-  constructor({ panel, fabButton, wrapper, overlayLayer, overlay, panelStates }) {
+  constructor({
+    panel,
+    fabButton,
+    wrapper,
+    overlayLayer,
+    overlay,
+    profileLayer,
+    profileOverlay,
+    profileForm,
+    panelStates,
+  }) {
     this.panel = panel;
     this.fabButton = fabButton;
     this.wrapper = wrapper;
     this.overlayLayer = overlayLayer;
     this.overlay = overlay;
+    this.profileLayer = profileLayer;
+    this.profileOverlayEl = profileOverlay;
+    this.profileForm = profileForm;
     this.panelStates = panelStates;
-    this.activeTab = "setup";
+    this.activeTab = "profile";
     this.panelOpen = false;
-    this.lastContext = null;
+    this.lastProfile = null;
 
-    this.contextBadge = new StatusBadge(wrapper.querySelector(uiSelectors.contextStatus));
+    this.profileBadge = new StatusBadge(wrapper.querySelector(uiSelectors.profileStatus));
     this.jobBadge = new StatusBadge(wrapper.querySelector(uiSelectors.jobStatus));
 
-    this.contextLibrary = new ContextLibrary(
+    this.profileManager = new ProfileManager(
       {
-        docList: wrapper.querySelector(uiSelectors.docList),
+        summary: wrapper.querySelector(uiSelectors.profileSummary),
       },
-      this.contextBadge
+      this.profileBadge
     );
+
+    this.profileOverlay = new ProfileOverlay({
+      layer: profileLayer,
+      overlay: profileOverlay,
+      form: profileForm,
+    });
 
     this.jobController = new JobController(
       {
@@ -137,10 +116,9 @@ class PanelApp {
     this.tabs = Array.from(wrapper.querySelectorAll("[data-tab]"));
     this.panels = Array.from(wrapper.querySelectorAll("[data-panel]"));
     this.generateButton = wrapper.querySelector(uiSelectors.generateBtn);
-    this.pickDirectoryButton = wrapper.querySelector(uiSelectors.pickDirectoryBtn);
+    this.openProfileButton = wrapper.querySelector(uiSelectors.openProfileBtn);
     this.boundOnHistoryClick = this.onHistoryClick.bind(this);
   }
-
   setPanelState(state) {
     if (!this.panel) return;
     this.panel.dataset.state = state;
@@ -188,16 +166,21 @@ class PanelApp {
   }
 
   updateGenerateButtonState() {
-    const hasContext = this.contextLibrary.hasContextData();
+    const hasProfile = this.profileManager.hasProfileData();
+    const hasJob = Boolean((this.jobController.currentJob?.text || "").trim());
     if (this.generateButton) {
-      this.generateButton.disabled = !hasContext;
-      this.generateButton.setAttribute("aria-disabled", hasContext ? "false" : "true");
+      const ready = hasProfile && hasJob;
+      this.generateButton.disabled = !ready;
+      this.generateButton.setAttribute("aria-disabled", ready ? "false" : "true");
+      if (!ready) {
+        this.generateButton.removeAttribute("data-busy");
+      }
     }
   }
 
-  maybeSelectInitialTab(context, resumes) {
-    if (!context || context.status !== "ready") {
-      this.switchTab("setup");
+  maybeSelectInitialTab(profile, resumes) {
+    if (!this.profileManager.hasProfileData()) {
+      this.switchTab("profile");
       return;
     }
     if (Array.isArray(resumes) && resumes.length) {
@@ -217,20 +200,10 @@ class PanelApp {
         });
     });
 
-    this.pickDirectoryButton?.addEventListener("click", async () => {
-      await this.contextLibrary.pickDirectory();
-      this.updateGenerateButtonState();
+    this.openProfileButton?.addEventListener("click", () => {
+      this.handleOpenProfileEditor();
     });
 
-    this.wrapper.querySelector(uiSelectors.refreshBtn)?.addEventListener("click", async () => {
-      this.contextBadge.set("Refresh in progress.", "info");
-      if (!this.contextLibrary.currentHandle) {
-        this.contextBadge.set("Select a qualifications folder first.", "error");
-        return;
-      }
-      await this.contextLibrary.scanDirectory(this.contextLibrary.currentHandle);
-      this.updateGenerateButtonState();
-    });
 
     this.wrapper.querySelector(uiSelectors.useSelectionBtn)?.addEventListener("click", () => {
       this.handleUseSelection();
@@ -292,7 +265,7 @@ class PanelApp {
       if (!message?.type) return;
       switch (message.type) {
         case "rise:update-context":
-          this.handleContextUpdate(message.payload ?? {});
+          this.handleProfileUpdate(message.payload ?? {});
           break;
         case "rise:update-jd":
           this.handleJobPayload(message.payload ?? {});
@@ -303,24 +276,41 @@ class PanelApp {
     });
   }
 
-  handleContextUpdate(payload = {}) {
-    console.info("[RiseAI] context update", {
-      status: payload?.context?.status ?? null,
-      pdfFiles: payload?.context?.pdfFiles ?? null,
-      chunkCount: payload?.context?.chunkCount ?? null,
+  handleProfileUpdate(payload = {}) {
+    console.info("[RiseAI] profile update", {
       timestamp: new Date().toISOString(),
     });
     const context = payload.context ?? null;
+    const profile = context?.profile ?? null;
     const message = payload.message;
-    this.lastContext = context;
-    this.contextLibrary.updateFromContext(context);
-    const parts = [summarizeContext(context)];
-    if (context?.errorMessage) parts.push(context.errorMessage);
-    if (message) parts.push(message);
-    this.contextBadge.set(parts.filter(Boolean).join(" | "), context?.status === "error" ? "error" : "info");
+    this.lastProfile = profile;
+    if (profile) {
+      this.profileManager.setProfile(profile);
+      this.profileBadge.set(message || "Profile ready.", "success");
+    } else {
+      this.profileManager.setProfile(null);
+      this.profileBadge.set(message || "Add your profile details to begin.", "info");
+    }
     this.updateGenerateButtonState();
   }
 
+  async handleOpenProfileEditor() {
+    try {
+      const existing = this.profileManager.getProfile();
+      const draft = existing ? JSON.parse(JSON.stringify(existing)) : null;
+      const updated = await this.profileOverlay.open(draft ?? null);
+      if (!updated) {
+        return;
+      }
+      const saved = await ProfileStore.save(updated);
+      this.profileManager.setProfile(saved);
+      this.profileBadge.set("Profile saved.", "success");
+      this.updateGenerateButtonState();
+    } catch (error) {
+      console.error("[RiseAI] profile editing failed", error);
+      this.profileBadge.set("Unable to save profile. Try again.", "error");
+    }
+  }
   handleJobPayload(payload = {}) {
     console.info("[RiseAI] job update", {
       source: payload?.job?.source ?? null,
@@ -331,6 +321,7 @@ class PanelApp {
     if (job) {
       this.jobController.hydrate(job);
     }
+    this.updateGenerateButtonState();
     return job;
   }
 
@@ -341,73 +332,22 @@ class PanelApp {
       this.jobController.focusTextarea();
       return null;
     }
-    if (this.generateButton) {
-      this.generateButton.disabled = true;
-      this.generateButton.setAttribute("data-busy", "true");
-    }
-    this.jobBadge.set("Generating resume with Gemini Nano...", "info");
 
-    const panelWasOpen = this.panelOpen;
-    this.wasPanelOpenBeforePreview = panelWasOpen;
-    if (panelWasOpen) {
-      this.closePanel();
-    }
-    this.previewOverlay.showLoading("Generating a tailored resume with Gemini Nano...");
+    this.jobBadge.set("Saving job description...", "info");
+    const payload = { text: trimmed, source: source || "manual" };
 
     try {
-      const response = await GeminiBridge.generateResume({ chunkLimit: 12, temperature: 0.45 });
-      const result = response.payload ?? {};
-
-      if (!result?.rawText && !result?.resume) {
-        console.warn("[RiseAI] Gemini returned an empty payload", result);
-        this.previewOverlay.showMessage({
-          title: "No response from Gemini",
-          body: "Gemini returned an empty response. Try adjusting the job description or refreshing your context library.",
-          tone: "error",
-        });
-        this.jobBadge.set("Gemini returned an empty response. Try again.", "error");
-        return;
-      }
-
-      const entry = {
-        id: `resume-${Date.now()}`,
-        title: "Resume generated",
-        createdAtMs: Date.now(),
-        createdAt: new Date().toLocaleString(),
-        updatedAtMs: Date.now(),
-        updatedAt: new Date().toLocaleString(),
-        resume: result.resume ?? null,
-        metadata: result.metadata ?? null,
-        rawText: result.rawText ?? "",
-        editedHtml: null,
-      };
-      console.info("[RiseAI] resume generation succeeded", {
-        finishReason: result.metadata?.finishReason ?? null,
-        chunkIds: result.metadata?.prompt?.metadata?.chunkIds ?? [],
-      });
-      const saved = await this.history.add(entry);
-      this.previewOverlay.open(saved);
-      this.jobBadge.set("Resume ready.", "success");
+      const response = await runtimeApi.send("rise:jd:update", payload);
+      const savedJob = response?.payload?.job ?? payload;
+      this.jobController.hydrate(savedJob);
+      this.jobBadge.set("Job description saved.", "success");
+      return savedJob;
     } catch (error) {
-      console.error("[RiseAI] resume generation failed", error);
-      const message = typeof error?.message === "string" ? error.message : "Resume generation failed.";
-      if (message.includes("No qualification context available")) {
-        const setupMessage = "Add qualification PDFs or text snippets in the Setup tab before generating.";
-        this.contextLibrary.statusBadge.set(setupMessage, "error");
-        this.switchTab("setup");
-        this.updateGenerateButtonState();
-      }
-      this.previewOverlay.showMessage({
-        title: "Generation failed",
-        body: message,
-        tone: "error",
-      });
-      this.jobBadge.set(message, "error");
+      console.error("[RiseAI] job save failed", error);
+      this.jobBadge.set("Unable to save the job description. Try again.", "error");
+      return null;
     } finally {
-      if (this.generateButton) {
-        this.generateButton.removeAttribute("data-busy");
-        this.updateGenerateButtonState();
-      }
+      this.updateGenerateButtonState();
     }
   }
 
@@ -428,12 +368,12 @@ class PanelApp {
   }
 
   async handleGenerate() {
-    if (!this.contextLibrary.hasContextData()) {
-      const setupMessage = "Add qualification PDFs or text snippets in the Setup tab before generating.";
-      this.contextLibrary.statusBadge.set(setupMessage, "error");
-      this.jobBadge.set(setupMessage, "error");
-      this.switchTab("setup");
-      this.pickDirectoryButton?.focus({ preventScroll: true });
+    if (!this.profileManager.hasProfileData()) {
+      const profileMessage = "Add your profile details in the Profile tab before generating.";
+      this.profileBadge.set(profileMessage, "error");
+      this.jobBadge.set(profileMessage, "error");
+      this.switchTab("profile");
+      this.openProfileButton?.focus({ preventScroll: true });
       return;
     }
     if (!this.jobController.currentJob?.text) {
@@ -443,7 +383,7 @@ class PanelApp {
     }
     console.info("[RiseAI] resume generation requested", {
       jobLength: this.jobController.currentJob?.text?.length ?? 0,
-      chunkCount: this.contextLibrary.documentCount,
+      profileReady: this.profileManager.hasProfileData(),
       timestamp: new Date().toISOString(),
     });
 
@@ -461,7 +401,7 @@ class PanelApp {
     }
 
     try {
-      const response = await GeminiBridge.generateResume({ chunkLimit: 12, temperature: 0.45 });
+      const response = await GeminiBridge.generateResume({ temperature: 0.25, topK: 32 });
       const result = response.payload ?? {};
 
       if (!result?.rawText && !result?.resume) {
@@ -475,21 +415,25 @@ class PanelApp {
         return;
       }
 
+      const resume = result.resume ?? null;
+      const timestamp = Date.now();
+      const resumeTitle = resume?.header?.fullName
+        ? `${resume.header.fullName} - Resume`
+        : 'Resume generated';
       const entry = {
-        id: `resume-${Date.now()}`,
-        title: "Resume generated",
-        createdAtMs: Date.now(),
-        createdAt: new Date().toLocaleString(),
-        updatedAtMs: Date.now(),
-        updatedAt: new Date().toLocaleString(),
-        resume: result.resume ?? null,
+        id: `resume-${timestamp}`,
+        title: resumeTitle,
+        createdAtMs: timestamp,
+        createdAt: new Date(timestamp).toLocaleString(),
+        updatedAtMs: timestamp,
+        updatedAt: new Date(timestamp).toLocaleString(),
+        resume,
         metadata: result.metadata ?? null,
-        rawText: result.rawText ?? "",
+        rawText: result.rawText ?? '',
         editedHtml: null,
       };
       console.info("[RiseAI] resume generation succeeded", {
         finishReason: result.metadata?.finishReason ?? null,
-        chunkIds: result.metadata?.prompt?.metadata?.chunkIds ?? [],
       });
       const saved = await this.history.add(entry);
       this.previewOverlay.open(saved);
@@ -497,11 +441,11 @@ class PanelApp {
     } catch (error) {
       console.error("[RiseAI] resume generation failed", error);
       const message = typeof error?.message === "string" ? error.message : "Resume generation failed.";
-      if (message.includes("No qualification context available")) {
-        const setupMessage = "Add qualification PDFs or text snippets in the Setup tab before generating.";
-        this.contextLibrary.statusBadge.set(setupMessage, "error");
-        this.switchTab("setup");
+      if (message.includes("Profile details")) {
+        this.profileBadge.set(message, "error");
+        this.switchTab("profile");
         this.updateGenerateButtonState();
+        this.openProfileButton?.focus({ preventScroll: true });
       }
       this.previewOverlay.showMessage({
         title: "Generation failed",
@@ -580,14 +524,8 @@ class PanelApp {
 
   async init() {
     SelectionTracker.init();
-    await this.contextLibrary.hydrate();
     this.updateGenerateButtonState();
     const resumes = await this.history.hydrate();
-    const restoredHandle = await this.contextLibrary.restoreHandle();
-    if (restoredHandle && !this.lastContext) {
-      // defer rescan until we know current context state
-      this.contextLibrary.currentHandle = restoredHandle;
-    }
 
     this.registerListeners();
 
@@ -602,34 +540,63 @@ class PanelApp {
     }
 
     if (contextResponse.status === "fulfilled") {
-      this.handleContextUpdate(contextResponse.value.payload ?? {});
-      if (
-        !contextResponse.value.payload?.context &&
-        this.contextLibrary.currentHandle &&
-        restoredHandle
-      ) {
-        await this.contextLibrary.scanDirectory(restoredHandle);
-        this.updateGenerateButtonState();
-      }
+      this.handleProfileUpdate(contextResponse.value.payload ?? {});
+    } else {
+      this.profileManager.setProfile(null);
     }
 
     if (jobResponse.status === "fulfilled") {
       this.handleJobPayload(jobResponse.value.payload ?? {});
     }
 
-    const context = contextResponse.status === "fulfilled" ? contextResponse.value.payload?.context ?? null : null;
-    this.maybeSelectInitialTab(context ?? this.contextLibrary.currentContext, resumes);
+    const profile =
+      contextResponse.status === "fulfilled"
+        ? contextResponse.value.payload?.context?.profile ?? null
+        : null;
+    this.maybeSelectInitialTab(profile, resumes);
     this.updateGenerateButtonState();
   }
 }
 
-export const mountPanelApp = ({ panel, fabButton, wrapper, overlayLayer, overlay, panelStates }) => {
-  const app = new PanelApp({ panel, fabButton, wrapper, overlayLayer, overlay, panelStates });
+export const mountPanelApp = ({
+  panel,
+  fabButton,
+  wrapper,
+  overlayLayer,
+  overlay,
+  profileLayer,
+  profileOverlay,
+  profileForm,
+  panelStates,
+}) => {
+  const app = new PanelApp({
+    panel,
+    fabButton,
+    wrapper,
+    overlayLayer,
+    overlay,
+    profileLayer,
+    profileOverlay,
+    profileForm,
+    panelStates,
+  });
   app.init().catch((error) => {
     console.error("[RiseAI] panel init failed", error);
   });
   return app;
 };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

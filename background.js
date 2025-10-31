@@ -6,8 +6,6 @@ import {
   setJobState,
 } from "./background/state.js";
 import { buildResumePrompt } from "./background/generation/prompt-template.js";
-import { invalidateChunkCache } from "./background/search/chunk-retrieval.js";
-import { replaceContextStores } from "./background/chunks/indexed-db.js";
 import {
   availabilityViaOffscreen,
   generateViaOffscreen,
@@ -68,73 +66,19 @@ registerHandler("rise:context:get-status", async () => {
   return { type: "rise:context:status", payload: { context } };
 });
 
-registerHandler("rise:context:selected", async (payload = {}, sender) => {
-  const context = {
-    id: crypto.randomUUID(),
-    name: payload.name ?? "Qualifications",
-    pickedAt: Date.now(),
-    status: "pending",
-    totalFiles: payload.totalFiles ?? 0,
-    pdfFiles: payload.pdfFiles ?? payload.totalFiles ?? 0,
-    chunkCount: payload.chunkCount ?? 0,
-  };
+registerHandler("rise:profile:save", async (payload = {}, sender) => {
+  const profile = payload?.profile ?? null;
+  const context = profile
+    ? {
+        id: crypto?.randomUUID?.() ?? `profile-${Date.now()}`,
+        status: "ready",
+        lastUpdatedAt: Date.now(),
+        profile,
+      }
+    : null;
   await setContextState(context);
-  notifyTab(sender.tab?.id, { type: "rise:update-context", payload: { context } });
-  return { type: "rise:context:status", payload: { context } };
-});
-
-registerHandler("rise:context:refresh", async (_, sender) => {
-  const current = await getContextState();
-  if (!current) {
-    return {
-      type: "rise:context:status",
-      payload: { context: null, message: "No context folder selected yet." },
-    };
-  }
-  const updated = { ...current, status: "refreshing", lastRefreshedAt: Date.now() };
-  await setContextState(updated);
-  notifyTab(sender.tab?.id, { type: "rise:update-context", payload: { context: updated } });
-  return { type: "rise:context:status", payload: { context: updated } };
-});
-
-registerHandler("rise:context:scan-result", async (payload = {}, sender) => {
-  const current = await getContextState();
-  if (!current) {
-    return {
-      type: "rise:context:status",
-      payload: { context: null, message: "No context recorded. Pick a folder again." },
-    };
-  }
-  const updated = {
-    ...current,
-    status: payload.error ? "error" : "ready",
-    totalFiles: payload.totalEntries ?? current.totalFiles ?? 0,
-    pdfFiles: payload.pdfCount ?? current.pdfFiles ?? 0,
-    chunkCount: payload.chunkCount ?? current.chunkCount ?? 0,
-    lastRefreshedAt: payload.scannedAt ?? Date.now(),
-    errorMessage: payload.error ?? null,
-    topEntries: payload.topEntries ?? current.topEntries ?? [],
-  };
-  await setContextState(updated);
-  notifyTab(sender.tab?.id, { type: "rise:update-context", payload: { context: updated } });
-  return { type: "rise:context:status", payload: { context: updated } };
-});
-
-registerHandler("rise:context:store", async (payload = {}) => {
-  const documents = Array.isArray(payload.documents) ? payload.documents : [];
-  const chunks = Array.isArray(payload.chunks) ? payload.chunks : [];
-  await replaceContextStores({ documents, chunks });
-  invalidateChunkCache();
-  return {
-    type: "rise:context:store:ack",
-    payload: { documentCount: documents.length, chunkCount: chunks.length },
-  };
-});
-
-registerHandler("rise:context:view", async (_, sender) => {
-  const context = await getContextState();
-  notifyTab(sender.tab?.id, { type: "rise:update-context", payload: { context } });
-  return { type: "rise:context:status", payload: { context } };
+  notifyTab(sender?.tab?.id, { type: "rise:update-context", payload: { context } });
+  return { type: "rise:profile:status", payload: { context } };
 });
 
 registerHandler("rise:jd:get", async (_, sender) => {
@@ -188,74 +132,39 @@ const parseResumeJson = (text = "") => {
 };
 
 registerHandler("rise:generator:resume", async (payload = {}) => {
-  const baseChunkLimit = payload.chunkLimit ?? 6;
-  const attemptedLimits = [];
-  let lastError = null;
+  console.info("[RiseAI] background resume generation", {
+    timestamp: new Date().toISOString(),
+  });
 
-  const limitsToTry = [baseChunkLimit, Math.max(3, Math.floor(baseChunkLimit / 2))];
+  const prompt = await buildResumePrompt();
+  const generation = await generateViaOffscreen({
+    options: {
+      systemPrompt: prompt.systemPrompt,
+      temperature: payload.temperature ?? 0.25,
+      topK: payload.topK ?? 32,
+    },
+    messages: Array.isArray(payload.messages) ? payload.messages : [],
+    prompt: prompt.userPrompt,
+  });
 
-  for (const currentLimit of limitsToTry) {
-    if (!currentLimit || attemptedLimits.includes(currentLimit)) continue;
-    attemptedLimits.push(currentLimit);
-
-    try {
-      console.info("[RiseAI] background resume attempt", {
-        chunkLimit: currentLimit,
-        timestamp: new Date().toISOString(),
-      });
-
-      const prompt = await buildResumePrompt({ chunkLimit: currentLimit });
-      const generation = await generateViaOffscreen({
-        options: {
-          systemPrompt: prompt.systemPrompt,
-          temperature: payload.temperature ?? 0.45,
-          topK: payload.topK ?? 40,
-        },
-        messages: Array.isArray(payload.messages) ? payload.messages : [],
-        prompt: prompt.userPrompt,
-      });
-
-      if (!generation?.text) {
-        console.warn("[RiseAI] Gemini returned empty text", {
-          chunkLimit: currentLimit,
-        });
-        lastError = new Error("Gemini returned an empty response.");
-        continue;
-      }
-
-      const resume = parseResumeJson(generation.text);
-
-      return {
-        type: "rise:generator:resume",
-        payload: {
-          resume,
-          metadata: {
-            prompt,
-            chunkLimit: currentLimit,
-            finishReason: generation?.finishReason ?? null,
-            usage: generation?.usage ?? null,
-          },
-          rawText: generation.text,
-        },
-      };
-    } catch (error) {
-      console.warn("[RiseAI] background resume attempt failed", {
-        chunkLimit: currentLimit,
-        error: error?.message ?? String(error),
-      });
-      lastError = error;
-
-      const message = typeof error?.message === "string" ? error.message : "";
-      const retryable =
-        message.includes("Other generic failures occurred") ||
-        message.includes("Gemini returned an empty response");
-      if (!retryable) {
-        break;
-      }
-    }
+  if (!generation?.text) {
+    throw new Error("Gemini returned an empty response.");
   }
 
-  throw lastError ?? new Error("Resume generation failed.");
+  const resume = parseResumeJson(generation.text);
+
+  return {
+    type: "rise:generator:resume",
+    payload: {
+      resume,
+      metadata: {
+        prompt,
+        finishReason: generation?.finishReason ?? null,
+        usage: generation?.usage ?? null,
+      },
+      rawText: generation.text,
+    },
+  };
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

@@ -74,6 +74,7 @@
     const wrapper = document.createElement("div");
     wrapper.className = "rise-ai-panel__wrapper";
     let overlayLayer = null;
+    let profileLayer = null;
     try {
       const response = await fetch(markupUrl);
       if (!response.ok) throw new Error(`status ${response.status}`);
@@ -94,7 +95,16 @@
           container.appendChild(overlayLayer);
         }
       }
-      return { wrapper, overlayLayer };
+      const profileTemplate = doc.querySelector("template#rise-ai-profile-template");
+      if (profileTemplate) {
+        const fragment = profileTemplate.content.cloneNode(true);
+        profileLayer =
+          fragment.querySelector("[data-profile-layer]") || fragment.firstElementChild || null;
+        if (profileLayer) {
+          container.appendChild(profileLayer);
+        }
+      }
+      return { wrapper, overlayLayer, profileLayer };
     } catch (error) {
       console.error("[RiseAI] failed to load panel template", error);
       panel.innerHTML = `
@@ -102,7 +112,7 @@
           Rise AI panel failed to load. Reload the page to try again.
         </div>
       `;
-      return { wrapper: null, overlayLayer: null };
+      return { wrapper: null, overlayLayer: null, profileLayer: null };
     }
   };
 
@@ -157,12 +167,15 @@
     injectPageBridge();
     setupBridgeListener();
     await injectPanelCss();
-    const { wrapper, overlayLayer } = await loadPanelTemplates();
+    const { wrapper, overlayLayer, profileLayer } = await loadPanelTemplates();
     if (!wrapper) return;
     try {
       const moduleUrl = chrome.runtime.getURL("content/panel-app.js");
       const { mountPanelApp } = await import(moduleUrl);
       const overlay = overlayLayer?.querySelector('[data-overlay="preview"]') ?? null;
+      const profileOverlay =
+        profileLayer?.querySelector('[data-overlay="profile"]') ?? null;
+      const profileForm = profileOverlay?.querySelector('[data-slot="profile-form"]') ?? null;
       mountPanelApp({
         host,
         shadowRoot,
@@ -171,6 +184,9 @@
         wrapper,
         overlayLayer,
         overlay,
+        profileLayer,
+        profileOverlay,
+        profileForm,
         panelStates: PANEL_STATES,
       });
     } catch (error) {

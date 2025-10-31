@@ -11,23 +11,18 @@
     </header>
 
     <nav class="panel__tabs" role="tablist">
-      <button class="panel__tab" data-tab="setup" role="tab" aria-selected="true">Setup</button>
+      <button class="panel__tab" data-tab="profile" role="tab" aria-selected="true">Profile</button>
       <button class="panel__tab" data-tab="job" role="tab" aria-selected="false">Job Description</button>
       <button class="panel__tab" data-tab="history" role="tab" aria-selected="false">History</button>
     </nav>
 
-    <section class="panel__section" data-panel="setup" role="tabpanel">
-      <p class="panel__status" data-slot="library-status">Select a qualifications folder to begin.</p>
+    <section class="panel__section" data-panel="profile" role="tabpanel">
+      <p class="panel__status" data-slot="profile-status">Add your professional profile to begin.</p>
       <div class="panel__actions">
-        <button class="panel__button" data-action="pick-directory">Choose Folder</button>
-        <button class="panel__button panel__button--ghost" data-action="refresh-library">Refresh</button>
+        <button class="panel__button" data-action="open-profile-editor">Add Profile Details</button>
       </div>
-      <div class="panel__docs">
-        <h4 class="panel__docs-title">Recent files</h4>
-        <ul class="panel__docs-list" data-slot="doc-list">
-          <li class="panel__docs-empty">No files detected.</li>
-        </ul>
-        <small class="panel__link" data-action="view-library">Manage library</small>
+      <div class="profile-summary" data-slot="profile-summary">
+        <p class="profile-summary__empty">No profile details saved yet.</p>
       </div>
     </section>
 
@@ -78,6 +73,25 @@
       </div>
       <div class="preview-overlay__content" data-slot="preview-content"></div>
       <div class="preview-overlay__content preview-overlay__content--editor" data-slot="preview-editor" hidden></div>
+    </section>
+  </div>
+</template>
+
+<template id="rise-ai-profile-template">
+  <div class="profile-layer" data-profile-layer hidden>
+    <div class="profile-layer__scrim" data-action="close-profile"></div>
+    <section class="profile-overlay" data-overlay="profile" hidden>
+      <header class="profile-overlay__header">
+        <div>
+          <h2 class="profile-overlay__title">Edit Profile</h2>
+          <p class="profile-overlay__subtitle">Update your professional details to tailor future resumes.</p>
+        </div>
+        <div class="profile-overlay__actions">
+          <button class="profile-overlay__button profile-overlay__button--ghost" data-action="cancel-profile">Cancel</button>
+          <button class="profile-overlay__button" data-action="save-profile">Save Profile</button>
+        </div>
+      </header>
+      <div class="profile-overlay__body" data-slot="profile-form"></div>
     </section>
   </div>
 </template>

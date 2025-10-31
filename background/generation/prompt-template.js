@@ -1,183 +1,285 @@
 import { getJobState, getContextState } from "../state.js";
-import { findRelevantChunks } from "../search/chunk-retrieval.js";
-import { estimateTokens, calculatePromptTokens, calculateMaxChunks, GEMINI_NANO_LIMITS } from "./token-counter.js";
+import { estimateTokens, calculatePromptTokens, GEMINI_NANO_LIMITS } from "./token-counter.js";
 
 const BASE_SYSTEM_PROMPT = `You are Rise AI, an on-device assistant that composes tailored resumes.
 - Output must be valid JSON following the provided schema.
 - Highlight measurable achievements when possible.
-- Stay truthful to the supplied context; never fabricate.
+- Stay truthful to the supplied profile data; never fabricate.
 - Treat the job description strictly as the target role -- never copy its responsibilities as the candidate's work history.
-- Keep the professional summary concise (no more than 2 sentences) and grounded in proven accomplishments from the context.
-- Prioritise experience, projects, and education details; present skills succinctly and avoid filler.`;
+- Keep the professional summary concise (no more than 2 sentences) and grounded in proven accomplishments from the profile.`;
 
-const DUMMY_JOHN_DOE_CHUNKS = [
-  {
-    id: "dummy-1",
-    docId: "john-doe-resume.pdf",
-    text: "JOHN DOE\njohndoe@email.com | +1 555-0123 | linkedin.com/in/johndoe | github.com/johndoe\n\nProfessional Summary\nSenior Software Engineer with 8+ years of experience building scalable web applications. Specialized in React, TypeScript, and Node.js. Led teams of 5-10 engineers and delivered products serving 1M+ users."
-  },
-  {
-    id: "dummy-2",
-    docId: "john-doe-resume.pdf",
-    text: "Experience\n\nSenior Frontend Engineer | TechCorp Inc. | San Francisco, CA | 2020 - Present\n- Led development of e-commerce platform using React and TypeScript, increasing conversion rate by 35%\n- Architected component library used across 12 products, reducing development time by 40%\n- Mentored 5 junior engineers and conducted weekly code reviews\n- Implemented automated testing pipeline, achieving 90% code coverage"
-  },
-  {
-    id: "dummy-3",
-    docId: "john-doe-resume.pdf",
-    text: "Frontend Developer | StartupXYZ | Austin, TX | 2017 - 2020\n- Built responsive web applications serving 500K+ monthly active users\n- Optimized bundle size from 3MB to 800KB, improving load time by 60%\n- Integrated third-party APIs including Stripe, Auth0, and AWS\n- Collaborated with design team to implement pixel-perfect UI/UX\n\nSkills: React, TypeScript, JavaScript, Node.js, PostgreSQL, AWS, Docker, Git, REST APIs, GraphQL, CI/CD"
+const MAX_SENTENCES_SUMMARY = 2;
+const MAX_EXPERIENCE_BULLETS = 6;
+const MAX_PROJECT_HIGHLIGHTS = 5;
+const MAX_EDUCATION_HIGHLIGHTS = 4;
+const MAX_SKILLS = 15;
+
+const toSentenceArray = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((item) => toSentenceArray(item))
+      .filter(Boolean);
   }
-];
-
-// Set to true to use dummy data for testing
-const USE_DUMMY_DATA = false;
-
-const MAX_CONTEXT_CHARS = 450;
-
-const cleanChunkText = (text) => {
-  const normalized = (text ?? "").replace(/\s+/g, " ").trim();
-  if (!normalized) return "";
-  if (normalized.length <= MAX_CONTEXT_CHARS) return normalized;
-  return `${normalized.slice(0, MAX_CONTEXT_CHARS - 3).trimEnd()}...`;
+  return String(value)
+    .split(/[.!?]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
 };
 
-const buildContextSummary = (chunks) =>
-  chunks
-    .map((chunk, idx) => {
-      const safeText = cleanChunkText(chunk.text);
-      return `Context #${idx + 1} (document: ${chunk.docId ?? "unknown"})\n${safeText}`;
+const clampArray = (value = [], limit = Infinity) =>
+  (Array.isArray(value) ? value : [value])
+    .map((item) => (typeof item === "string" ? item.trim() : item))
+    .filter(Boolean)
+    .slice(0, limit);
+
+const formatContactLine = (contacts = {}) => {
+  const parts = [
+    contacts.email && `Email: ${contacts.email}`,
+    contacts.phone && `Phone: ${contacts.phone}`,
+    contacts.location && `Location: ${contacts.location}`,
+    contacts.website && `Website: ${contacts.website}`,
+    contacts.linkedin && `LinkedIn: ${contacts.linkedin}`,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" | ") : "";
+};
+
+const formatExperienceSection = (entries = []) =>
+  clampArray(entries, 10)
+    .map((entry, index) => {
+      if (!entry) return null;
+      const role = entry.title || entry.role || "Role";
+      const company = entry.company || entry.organisation || entry.organization;
+      const heading = company ? `${role} at ${company}` : role;
+      const location = entry.location || "";
+      const dates =
+        entry.dates ||
+        entry.period ||
+        [entry.startDate, entry.endDate || (entry.current ? "Present" : "")]
+          .filter(Boolean)
+          .join(" - ");
+      const bullets =
+        clampArray(entry.highlights || entry.bullets || entry.achievements || [], MAX_EXPERIENCE_BULLETS).length
+          ? clampArray(entry.highlights || entry.bullets || entry.achievements || [], MAX_EXPERIENCE_BULLETS)
+              .map((item) => `- ${item}`)
+              .join("\n")
+          : entry.description
+          ? `- ${entry.description}`
+          : "";
+      const metaLine = [dates, location].filter(Boolean).join(" | ");
+      return [
+        `Experience #${index + 1}: ${heading}`,
+        metaLine ? `  ${metaLine}` : null,
+        bullets,
+      ]
+        .filter(Boolean)
+        .join("\n");
     })
+    .filter(Boolean)
     .join("\n\n");
 
-const composeUserPrompt = ({ jobText, chunks, instructions }) =>
-  `JOB DESCRIPTION (target role, do not copy verbatim):\n${jobText}\n\nQUALIFICATION CONTEXT (candidate evidence):\n${buildContextSummary(chunks)}${instructions}`;
+const formatProjectSection = (entries = []) =>
+  clampArray(entries, 10)
+    .map((entry, index) => {
+      if (!entry) return null;
+      const title = entry.title || entry.name || `Project ${index + 1}`;
+      const subtitleParts = [
+        entry.role,
+        entry.dates || entry.timeline || [entry.startDate, entry.endDate || (entry.current ? "Present" : "")]
+          .filter(Boolean)
+          .join(" - "),
+      ].filter(Boolean);
+      const subtitle = subtitleParts.length ? `  ${subtitleParts.join(" | ")}` : "";
+      const description = entry.description ? `  ${entry.description}` : "";
+      const highlights = clampArray(entry.impact || entry.highlights || entry.results || [], MAX_PROJECT_HIGHLIGHTS)
+        .map((item) => `- ${item}`)
+        .join("\n");
+      const link = entry.link || entry.url ? `  Link: ${entry.link || entry.url}` : "";
+      return [
+        `Project #${index + 1}: ${title}`,
+        subtitle,
+        description,
+        highlights,
+        link,
+      ]
+        .filter(Boolean)
+        .join("\n");
+    })
+    .filter(Boolean)
+    .join("\n\n");
 
-export const buildResumePrompt = async ({ chunkLimit = 12 } = {}) => {
+const formatEducationSection = (entries = []) =>
+  clampArray(entries, 10)
+    .map((entry, index) => {
+      if (!entry) return null;
+      const degree = entry.degree || entry.qualification || entry.program || `Education #${index + 1}`;
+      const institution = entry.institution || entry.school || entry.university;
+      const heading = institution ? `${degree} - ${institution}` : degree;
+      const location = entry.location || "";
+      const dates =
+        entry.dates ||
+        entry.timeline ||
+        [entry.startDate, entry.endDate || (entry.current ? "Present" : "")]
+          .filter(Boolean)
+          .join(" - ");
+      const metaLine = [dates, location].filter(Boolean).join(" | ");
+      const highlights = clampArray(entry.highlights || entry.bullets || entry.achievements || [], MAX_EDUCATION_HIGHLIGHTS)
+        .map((item) => `- ${item}`)
+        .join("\n");
+      return [
+        `Education #${index + 1}: ${heading}`,
+        metaLine ? `  ${metaLine}` : null,
+        highlights,
+      ]
+        .filter(Boolean)
+        .join("\n");
+    })
+    .filter(Boolean)
+    .join("\n\n");
+
+const formatSkills = (skills = []) =>
+  clampArray(skills, MAX_SKILLS)
+    .map((skill) => (typeof skill === "string" ? skill.trim() : ""))
+    .filter(Boolean)
+    .join(", ");
+
+const buildProfileNarrative = (profile) => {
+  if (!profile) return "";
+  const header = profile.header || {};
+  const summarySentences = clampArray(
+    profile.summary ? toSentenceArray(profile.summary) : profile.summaryPoints || [],
+    MAX_SENTENCES_SUMMARY
+  );
+  const experiencesText = formatExperienceSection(profile.experience || profile.experiences);
+  const projectsText = formatProjectSection(profile.projects);
+  const educationText = formatEducationSection(profile.education || profile.educations);
+  const skillsText = formatSkills(profile.skills || profile.skillSet);
+  const certificationsText = clampArray(profile.certifications || [], 10)
+    .map((item, idx) => `Certification #${idx + 1}: ${item}`)
+    .join("\n");
+
+  const sections = [
+    "PROFILE HEADER:",
+    header.fullName ? `Name: ${header.fullName}` : null,
+    header.headline ? `Headline: ${header.headline}` : null,
+    formatContactLine(header),
+    summarySentences.length
+      ? ["SUMMARY:", ...summarySentences.map((sentence) => `- ${sentence}`)].join("\n")
+      : null,
+    experiencesText ? `EXPERIENCE:\n${experiencesText}` : null,
+    projectsText ? `PROJECTS:\n${projectsText}` : null,
+    educationText ? `EDUCATION:\n${educationText}` : null,
+    skillsText ? `SKILLS:\n${skillsText}` : null,
+    certificationsText ? `CERTIFICATIONS:\n${certificationsText}` : null,
+  ];
+
+  return sections.filter(Boolean).join("\n\n");
+};
+
+export const buildResumePrompt = async () => {
   const [job, context] = await Promise.all([getJobState(), getContextState()]);
   if (!job?.text) {
     throw new Error("Job description is missing. Add or paste one before generating.");
   }
+  const profile = context?.profile;
+  if (!profile) {
+    throw new Error("Profile details are missing. Add your profile in the Profile tab before generating.");
+  }
 
-  // Build system prompt first
+  const profileNarrative = buildProfileNarrative(profile);
+  if (!profileNarrative.trim()) {
+    throw new Error("Profile details are incomplete. Add experiences, education, projects, or skills before generating.");
+  }
+
   const systemPrompt = `${BASE_SYSTEM_PROMPT}
 
 JSON schema:
 {
   "version": string,
-  "sections": [
-    {
-      "id": string,
-      "title": string,
-      "content": unknown
+  "header": {
+    "fullName": string,
+    "headline": string,
+    "contacts": {
+      "email"?: string,
+      "phone"?: string,
+      "location"?: string,
+      "website"?: string,
+      "linkedin"?: string
     }
-  ]
-}
+  },
+  "summary": [string, string],
+  "experience": [
+    {
+      "title": string,
+      "company": string,
+      "location"?: string,
+      "dates"?: string,
+      "highlights": [string, ...]
+    }
+  ],
+  "projects"?: [
+    {
+      "title": string,
+      "subtitle"?: string,
+      "dates"?: string,
+      "description"?: string,
+      "impact": [string, ...],
+      "link"?: string
+    }
+  ],
+  "education"?: [
+    {
+      "degree": string,
+      "institution": string,
+      "location"?: string,
+      "dates"?: string,
+      "highlights": [string, ...]
+    }
+  ],
+  "skills": [string, ...],
+  "certifications"?: [string, ...]
+}`;
 
-Section expectations:
-- summary: content is an array of paragraphs (strings).
-- experience: content is an array of objects { title, company?, location?, dates?, bullets[] }.
-- projects: content is an array of objects { title, description?, impact?, link?, dates? }.
-- skills: content is an array of strings.
-- education: content is an array of objects { degree?, institution?, dates?, highlights? }.`;
-
-  // Calculate safe chunk limit based on token budget
   const instructions = `
 
 INSTRUCTIONS:
-1. Job description is for alignment only. Do not present it as part of the candidate's prior roles.
-2. Summary must contain no more than 2 sentences (ideally exactly 2) that highlight quantified wins backed by the context snippets.
-3. Experience entries must reference real employers, roles, and outcomes drawn from the context; keep standalone project work in the projects section instead of experience.
-4. Add a "projects" section when the context mentions notable initiatives, using objects { title, description, impact? }. Omit the section if no projects exist.
-5. Skills should be a concise list of up to 10 items derived from the context and relevant to the job description.
-6. Education should capture degrees, institutions, dates, and honours exactly as provided in the context.
-7. Omit sections you cannot substantiate from the context rather than fabricating content.
-`;
-  const avgChunkSize = 600; // Conservative estimate
-  const safeChunkLimit = calculateMaxChunks({
-    systemPrompt,
-    jobDescription: job.text + instructions,
-    avgChunkSize,
-    overhead: 100,
-  });
+1. Use the PROFILE DATA verbatim as the source of truth. Never invent employers, dates, or accomplishments that are not supplied.
+2. Produce exactly two sentences in the summary array and make each sentence highlight quantified or outcome-driven achievements.
+3. Experience entries must stay focused on relevant roles from the profile; compress unrelated roles or omit them if the job description does not require them.
+4. List projects separately from experience, drawing only from the supplied profile projects. If none exist, omit the section entirely.
+5. Limit skills to the top items from the profile that best align with the job description. Do not exceed 15 skills.
+6. Format dates as concise ranges (for example, "Jan 2021 - Jun 2023").
+7. If certifications or additional distinctions are provided, place them in the certifications array; otherwise omit the property.
+8. The JSON must be strictly valid and conform to the schema.`
 
-  console.log("[RiseAI] Token budget analysis:", {
-    requestedChunks: chunkLimit,
-    safeChunkLimit,
-    systemTokens: estimateTokens(systemPrompt),
-    jobTokens: estimateTokens(job.text),
-    limit: GEMINI_NANO_LIMITS.PER_PROMPT,
-  });
+  const userPrompt = `JOB DESCRIPTION (target role, do not copy verbatim):\n${job.text}\n\nPROFILE DATA (authoritative candidate information):\n${profileNarrative}${instructions}`;
 
-  // Use the smaller of requested or safe limit
-  const effectiveLimit = Math.min(chunkLimit, Math.max(1, safeChunkLimit));
+  const tokenCount = calculatePromptTokens({ systemPrompt, userPrompt });
+  const totalTokens = tokenCount.total ?? estimateTokens(systemPrompt) + estimateTokens(userPrompt);
 
-  let relevantChunks;
-
-  if (USE_DUMMY_DATA) {
-    console.log("[RiseAI] Using DUMMY John Doe data for testing");
-    relevantChunks = DUMMY_JOHN_DOE_CHUNKS.slice(0, Math.min(effectiveLimit, 3));
-  } else {
-    relevantChunks = await findRelevantChunks({
-      jobDescription: job.text,
-      limit: effectiveLimit,
-    });
-
-    if (!relevantChunks.length) {
-      throw new Error(
-        "No qualification context available. Add PDFs or text snippets in the Setup tab first."
-      );
-    }
-  }
-
-  let selectedChunks = [...relevantChunks];
-  let userPrompt = composeUserPrompt({ jobText: job.text, chunks: selectedChunks, instructions });
-
-  // Final token validation with adaptive chunk trimming
-  let tokenCount = calculatePromptTokens({ systemPrompt, userPrompt });
-
-  while (
-    tokenCount.total > GEMINI_NANO_LIMITS.PER_PROMPT &&
-    selectedChunks.length > 1
-  ) {
-    selectedChunks = selectedChunks.slice(0, -1);
-    userPrompt = composeUserPrompt({ jobText: job.text, chunks: selectedChunks, instructions });
-    tokenCount = calculatePromptTokens({ systemPrompt, userPrompt });
-    console.warn("[RiseAI] Prompt tokens above limit, dropping last context chunk", {
-      remainingChunks: selectedChunks.length,
-      tokens: tokenCount.total,
-      limit: GEMINI_NANO_LIMITS.PER_PROMPT,
-    });
-  }
-
-  if (!selectedChunks.length) {
-    throw new Error("Unable to compose prompt within token limits. Try removing large context files and retry.");
+  if (totalTokens > GEMINI_NANO_LIMITS.PER_PROMPT) {
+    console.warn(
+      "[RiseAI] prompt tokens exceed on-device guideline; proceeding anyway.",
+      { totalTokens, limit: GEMINI_NANO_LIMITS.PER_PROMPT }
+    );
   }
 
   console.log("[RiseAI] Final prompt tokens:", {
     system: tokenCount.systemTokens,
     user: tokenCount.userTokens,
-    total: tokenCount.total,
-    chunksUsed: selectedChunks.length,
-    underLimit: tokenCount.total <= GEMINI_NANO_LIMITS.PER_PROMPT,
+    total: totalTokens,
   });
-
-  if (tokenCount.total > GEMINI_NANO_LIMITS.PER_PROMPT) {
-    console.warn("[RiseAI] Prompt exceeds token limit!", {
-      tokens: tokenCount.total,
-      limit: GEMINI_NANO_LIMITS.PER_PROMPT,
-      overage: tokenCount.total - GEMINI_NANO_LIMITS.PER_PROMPT,
-    });
-  }
 
   return {
     systemPrompt,
     userPrompt,
     metadata: {
       job,
-      context,
-      chunkIds: selectedChunks.map((chunk) => chunk.id),
-      tokenCount,
-      chunksUsed: selectedChunks.length,
-      chunksRequested: chunkLimit,
+      profile,
+      tokenCount: {
+        ...tokenCount,
+        total: totalTokens,
+      },
     },
   };
 };

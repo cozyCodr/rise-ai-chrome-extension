@@ -1,10 +1,7 @@
 const DB_CONFIG = {
-  NAME: "rise_ai_context",
-  VERSION: 4,
+  NAME: "rise_ai_data",
+  VERSION: 1,
   STORES: {
-    HANDLES: "handles",
-    DOCUMENTS: "documents",
-    CHUNKS: "chunks",
     RESUMES: "resumes",
   },
 };
@@ -17,16 +14,7 @@ const openDatabase = () => {
       const request = indexedDB.open(DB_CONFIG.NAME, DB_CONFIG.VERSION);
       request.onupgradeneeded = (event) => {
         const db = event.target.result;
-        const { HANDLES, DOCUMENTS, CHUNKS, RESUMES } = DB_CONFIG.STORES;
-        if (!db.objectStoreNames.contains(HANDLES)) {
-          db.createObjectStore(HANDLES);
-        }
-        if (!db.objectStoreNames.contains(DOCUMENTS)) {
-          db.createObjectStore(DOCUMENTS, { keyPath: "id" });
-        }
-        if (!db.objectStoreNames.contains(CHUNKS)) {
-          db.createObjectStore(CHUNKS, { keyPath: "id" });
-        }
+        const { RESUMES } = DB_CONFIG.STORES;
         if (!db.objectStoreNames.contains(RESUMES)) {
           db.createObjectStore(RESUMES, { keyPath: "id" });
         }
@@ -38,25 +26,10 @@ const openDatabase = () => {
   return dbPromise;
 };
 
-const ensureTransaction = (db, storeName, mode) => {
-  if (!db.objectStoreNames.contains(storeName)) {
-    throw new Error(`Object store "${storeName}" is unavailable. Refresh Rise AI to rescan your library.`);
-  }
-  return db.transaction(storeName, mode);
-};
-
 const withStore = async (storeName, mode, callback) => {
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
-    let tx;
-    try {
-      tx = ensureTransaction(db, storeName, mode);
-    } catch (error) {
-      db.close();
-      dbPromise = null;
-      reject(error);
-      return;
-    }
+    const tx = db.transaction(storeName, mode);
     const store = tx.objectStore(storeName);
     let result;
     try {
@@ -81,87 +54,90 @@ const withStore = async (storeName, mode, callback) => {
 };
 
 export const database = {
-  saveDocument: (doc) =>
-    withStore(DB_CONFIG.STORES.DOCUMENTS, "readwrite", (store) => store.put(doc)),
-  listDocuments: () =>
-    withStore(DB_CONFIG.STORES.DOCUMENTS, "readonly", (store) => store.getAll()),
-  clearDocuments: () =>
-    withStore(DB_CONFIG.STORES.DOCUMENTS, "readwrite", (store) => store.clear()),
-  saveChunk: (chunk) =>
-    withStore(DB_CONFIG.STORES.CHUNKS, "readwrite", (store) => store.put(chunk)),
-  clearChunks: () =>
-    withStore(DB_CONFIG.STORES.CHUNKS, "readwrite", (store) => store.clear()),
   saveResume: (entry) =>
     withStore(DB_CONFIG.STORES.RESUMES, "readwrite", (store) => store.put(entry)),
   listResumes: () =>
     withStore(DB_CONFIG.STORES.RESUMES, "readonly", (store) => store.getAll()),
-  saveHandle: (handle) =>
-    withStore(DB_CONFIG.STORES.HANDLES, "readwrite", (store) => store.put(handle, "context")),
-  getHandle: () =>
-    withStore(DB_CONFIG.STORES.HANDLES, "readonly", (store) => store.get("context")),
 };
 
-let pdfjsPromise = null;
-
-const loadPdfjs = async () => {
-  if (!pdfjsPromise) {
-    pdfjsPromise = import(chrome.runtime.getURL("vendor/pdfjs/pdf.mjs")).then((pdfjs) => {
-      if (pdfjs.GlobalWorkerOptions) {
-        pdfjs.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("vendor/pdfjs/pdf.worker.mjs");
-      }
-      return pdfjs;
-    });
-  }
-  return pdfjsPromise;
-};
-
-const normaliseWhitespace = (text = "") => text.replace(/\s+/g, " ").trim();
-
-export const Chunking = {
-  async extractText(file) {
-    if (!file) return "";
-    try {
-      const pdfjs = await loadPdfjs();
-      const buffer = await file.arrayBuffer();
-      const task = pdfjs.getDocument({ data: buffer, useSystemFonts: true });
-      const pdf = await task.promise;
-      let text = "";
-      const maxPages = Math.min(pdf.numPages, 40);
-      for (let pageIndex = 1; pageIndex <= maxPages; pageIndex += 1) {
-        const page = await pdf.getPage(pageIndex);
-        const content = await page.getTextContent();
-        const pageText = content.items
-          .map((item) => (typeof item.str === "string" ? item.str : ""))
-          .join(" ");
-        text += `${pageText}\n`;
-        if (text.length > 20000) break;
-      }
-      await pdf.destroy();
-      return normaliseWhitespace(text);
-    } catch (error) {
-      console.warn("[RiseAI] PDF extraction failed", error);
-      return "";
-    }
+export const DEFAULT_PROFILE = {
+  header: {
+    fullName: "",
+    headline: "",
+    email: "",
+    phone: "",
+    location: "",
+    website: "",
+    linkedin: "",
   },
-  chunkText(text, size = 900, overlap = 120) {
-    const cleaned = normaliseWhitespace(text);
-    if (!cleaned) return [];
-    const chunks = [];
-    let start = 0;
-    while (start < cleaned.length) {
-      const end = Math.min(start + size, cleaned.length);
-      let segment = cleaned.slice(start, end);
-      if (end < cleaned.length) {
-        const lastSpace = segment.lastIndexOf(" ");
-        if (lastSpace > 200) {
-          segment = segment.slice(0, lastSpace);
-        }
-      }
-      chunks.push(segment.trim());
-      if (end >= cleaned.length) break;
-      start = end - overlap;
+  summary: "",
+  experience: [],
+  projects: [],
+  education: [],
+  skills: [],
+  certifications: [],
+};
+
+const randomId = (prefix) =>
+  (typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`);
+
+const ensureWithId = (entry, prefix) => {
+  const result = { ...(entry || {}) };
+  if (!result.id) {
+    result.id = randomId(prefix);
+  }
+  return result;
+};
+
+const normaliseProfile = (profile) => {
+  if (!profile || typeof profile !== "object") {
+    return JSON.parse(JSON.stringify(DEFAULT_PROFILE));
+  }
+  const merged = {
+    ...DEFAULT_PROFILE,
+    ...profile,
+    header: { ...DEFAULT_PROFILE.header, ...(profile.header ?? {}) },
+  };
+  merged.experience = Array.isArray(profile.experience)
+    ? profile.experience.map((item) => ensureWithId(item, "exp"))
+    : [];
+  merged.projects = Array.isArray(profile.projects)
+    ? profile.projects.map((item) => ensureWithId(item, "proj"))
+    : [];
+  merged.education = Array.isArray(profile.education)
+    ? profile.education.map((item) => ensureWithId(item, "edu"))
+    : [];
+  merged.skills = Array.isArray(profile.skills)
+    ? profile.skills
+    : typeof profile.skills === "string"
+    ? profile.skills.split(",").map((skill) => skill.trim()).filter(Boolean)
+    : [];
+  merged.certifications = Array.isArray(profile.certifications)
+    ? profile.certifications
+    : typeof profile.certifications === "string"
+    ? profile.certifications.split(",").map((item) => item.trim()).filter(Boolean)
+    : [];
+  return merged;
+};
+
+export const ProfileStore = {
+  async load() {
+    const response = await sendRuntimeMessage("rise:context:get-status");
+    const context = response?.payload?.context ?? null;
+    if (!context?.profile) {
+      return JSON.parse(JSON.stringify(DEFAULT_PROFILE));
     }
-    return chunks.filter(Boolean);
+    return normaliseProfile(context.profile);
+  },
+  async save(profile) {
+    const normalised = normaliseProfile(profile);
+    await sendRuntimeMessage("rise:profile:save", { profile: normalised });
+    return normalised;
+  },
+  async clear() {
+    await sendRuntimeMessage("rise:profile:save", { profile: null });
   },
 };
 
@@ -243,9 +219,8 @@ const sendRuntimeMessage = (type, payload) =>
   });
 
 export const GeminiBridge = {
-  async generateResume(payload) {
+  async generateResume(payload = {}) {
     console.info("[RiseAI] GeminiBridge.generateResume", {
-      chunkLimit: payload?.chunkLimit,
       temperature: payload?.temperature,
       topK: payload?.topK,
     });
