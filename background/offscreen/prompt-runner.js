@@ -5,8 +5,6 @@
     return;
   }
 
-  const state = { sessionPromise: null };
-
   const createSessionFactory = () => {
     const namespace = window.ai?.languageModel ?? window.LanguageModel ?? null;
     if (!namespace) return null;
@@ -17,18 +15,16 @@
     return null;
   };
 
-  const ensureSession = async (options = {}) => {
-    if (state.sessionPromise) return state.sessionPromise;
+  const createSession = async (options = {}) => {
     const factory = createSessionFactory();
     if (!factory) {
       throw new Error("Prompt API unavailable or create() not exposed.");
     }
     const sessionOptions = {
       topK: options.topK ?? 40,
-      temperature: options.temperature ?? 0.7,
-      expectedOutputs: [
-        { type: "text", languages: ["en"] }
-      ]
+      temperature: options.temperature ?? 0.45,
+      expectedInputs: [{ type: "text", languages: ["en"] }],
+      expectedOutputs: [{ type: "text", languages: ["en"] }],
     };
 
     // DON'T use initialPrompts - it counts against per-prompt token limit
@@ -37,27 +33,21 @@
     console.log("[RiseAI Offscreen] Creating session with options:", {
       topK: sessionOptions.topK,
       temperature: sessionOptions.temperature,
-      hasExpectedOutputs: !!sessionOptions.expectedOutputs
+      hasExpectedInputs: !!sessionOptions.expectedInputs,
+      hasExpectedOutputs: !!sessionOptions.expectedOutputs,
     });
-    state.sessionPromise = factory(sessionOptions);
+
     try {
-      return await state.sessionPromise;
+      const session = await factory(sessionOptions);
+      console.log("[RiseAI Offscreen] Session created successfully");
+      return session;
     } catch (error) {
       console.error("[RiseAI Offscreen] Session creation failed:", error);
-      state.sessionPromise = null;
+      console.error("[RiseAI Offscreen] Session creation error details:", {
+        name: error?.name,
+        message: error?.message,
+      });
       throw error;
-    }
-  };
-
-  const destroySession = async () => {
-    if (!state.sessionPromise) return;
-    try {
-      const session = await state.sessionPromise;
-      session?.destroy?.();
-    } catch (error) {
-      console.warn("[RiseAI] offscreen destroy failed", error);
-    } finally {
-      state.sessionPromise = null;
     }
   };
 
@@ -146,8 +136,8 @@
       return namespace.availability(options);
     },
     async "prompt:generate"(payload = {}) {
+      let session = null;
       try {
-        const session = await ensureSession(payload.options || {});
         let userText = composePromptText(payload.messages, payload.prompt);
         if (!userText.trim()) {
           throw new Error("No prompt supplied.");
@@ -161,24 +151,49 @@
 
         console.log("[RiseAI Offscreen] Total prompt length:", userText.length, "chars (~" + Math.ceil(userText.length / 4) + " tokens)");
 
+        // Create a fresh session for each generation (no caching/reuse)
+        session = await createSession(payload.options || {});
+
         const response = await session.prompt(userText);
         const aggregatedText = unwrapResponseText(response);
         const finishReason = response?.finishReason ?? "unknown";
         const usage = response?.usage ?? null;
 
         console.log("[RiseAI Offscreen] Response received, length:", aggregatedText.length);
+
+        // Destroy session immediately after use
+        try {
+          session?.destroy?.();
+          console.log("[RiseAI Offscreen] Session destroyed after generation");
+        } catch (destroyError) {
+          console.warn("[RiseAI Offscreen] Failed to destroy session:", destroyError);
+        }
+
         return {
           text: aggregatedText,
           finishReason,
           usage,
         };
       } catch (error) {
-        console.error("[RiseAI Offscreen] prompt failed", error, { payload });
+        console.error("[RiseAI Offscreen] prompt failed", error);
+        console.error("[RiseAI Offscreen] Error details:", {
+          name: error?.name,
+          message: error?.message,
+          code: error?.code,
+          stack: error?.stack,
+        });
+        // Ensure session is destroyed even on error
+        try {
+          session?.destroy?.();
+        } catch (destroyError) {
+          // Ignore destroy errors during error handling
+        }
         throw error;
       }
     },
     async "prompt:reset"() {
-      await destroySession();
+      // No-op since we don't cache sessions anymore
+      console.log("[RiseAI Offscreen] Reset requested (no cached session to destroy)");
       return { ok: true };
     },
   };

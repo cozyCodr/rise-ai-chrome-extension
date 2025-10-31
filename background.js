@@ -140,8 +140,8 @@ registerHandler("rise:generator:resume", async (payload = {}) => {
   const generation = await generateViaOffscreen({
     options: {
       systemPrompt: prompt.systemPrompt,
-      temperature: payload.temperature ?? 0.25,
-      topK: payload.topK ?? 32,
+      temperature: payload.temperature ?? 0.45,
+      topK: payload.topK ?? 40,
     },
     messages: Array.isArray(payload.messages) ? payload.messages : [],
     prompt: prompt.userPrompt,

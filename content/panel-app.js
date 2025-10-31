@@ -436,7 +436,7 @@ class PanelApp {
         finishReason: result.metadata?.finishReason ?? null,
       });
       const saved = await this.history.add(entry);
-      this.previewOverlay.open(saved);
+      await this.previewOverlay.open(saved);
       this.jobBadge.set("Resume ready.", "success");
     } catch (error) {
       console.error("[RiseAI] resume generation failed", error);
@@ -508,7 +508,7 @@ class PanelApp {
     this.jobBadge.set("Preview closed.", "info");
   }
 
-  onHistoryClick(event) {
+  async onHistoryClick(event) {
     const card = event.target.closest(".history-item");
     if (!card) return;
     const entry = this.history.getById(card.dataset.resumeId);
@@ -518,7 +518,7 @@ class PanelApp {
       if (panelWasOpen) {
         this.closePanel();
       }
-      this.previewOverlay.open(entry);
+      await this.previewOverlay.open(entry);
     }
   }
 

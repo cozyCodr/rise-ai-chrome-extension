@@ -35,3 +35,208 @@
 .simple-editor-surface:focus {
   outline: 2px solid rgba(79, 70, 229, 0.4);
 }
+
+/* Fallback editor styles */
+.editor-fallback {
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  line-height: 1.6;
+  color: #111214;
+}
+
+.editor-fallback h1 {
+  font-size: 28px;
+  font-weight: 700;
+  margin: 0 0 16px;
+  line-height: 1.3;
+}
+
+.editor-fallback h2 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 24px 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid rgba(17, 17, 18, 0.12);
+  letter-spacing: 0.02em;
+}
+
+.editor-fallback h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 16px 0 8px;
+}
+
+.editor-fallback p {
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+
+.editor-fallback ul,
+.editor-fallback ol {
+  margin: 0 0 16px;
+  padding-left: 24px;
+}
+
+.editor-fallback li {
+  margin: 6px 0;
+  font-size: 14px;
+}
+
+.editor-fallback a {
+  color: #4f46e5;
+  text-decoration: none;
+}
+
+.editor-fallback a:hover {
+  text-decoration: underline;
+}
+
+/* Read-only mode for fallback */
+.editor-fallback[contenteditable="false"] {
+  cursor: default;
+}
+
+/* EditorJS container styles */
+.editorjs-container {
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  position: relative;
+  min-height: 320px;
+}
+
+/* Fix EditorJS block borders - remove input-like appearance */
+.editorjs-container .ce-block {
+  border: none !important;
+  outline: none !important;
+}
+
+.editorjs-container .ce-block__content {
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* Fix inline toolbar positioning */
+.editorjs-container .ce-inline-toolbar {
+  display: flex !important;
+  flex-direction: row !important;
+  gap: 4px;
+  background: #111214;
+  border-radius: 8px;
+  padding: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.editorjs-container .ce-inline-toolbar__buttons {
+  display: flex !important;
+  flex-direction: row !important;
+  gap: 2px;
+}
+
+.editorjs-container .ce-inline-tool {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.editorjs-container .ce-inline-tool:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.editorjs-container .ce-inline-tool--active {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Block toolbar (left side) */
+.editorjs-container .ce-toolbar {
+  position: absolute;
+  left: -32px;
+}
+
+.editorjs-container .ce-toolbar__plus,
+.editorjs-container .ce-toolbar__settings-btn {
+  color: #111214;
+  background: transparent;
+  border: none;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s ease;
+}
+
+.editorjs-container .ce-toolbar__plus:hover,
+.editorjs-container .ce-toolbar__settings-btn:hover {
+  background: rgba(17, 17, 18, 0.06);
+}
+
+/* Block settings dropdown */
+.editorjs-container .ce-popover {
+  background: #ffffff;
+  border: 1px solid rgba(17, 17, 18, 0.12);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 4px;
+}
+
+.editorjs-container .ce-popover__item {
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.editorjs-container .ce-popover__item:hover {
+  background: rgba(17, 17, 18, 0.06);
+}
+
+/* EditorJS block content styling */
+.editorjs-container h1,
+.editorjs-container h2,
+.editorjs-container h3,
+.editorjs-container h4,
+.editorjs-container h5,
+.editorjs-container h6 {
+  font-weight: 600;
+  margin: 0;
+  padding: 8px 0;
+}
+
+.editorjs-container h1 { font-size: 28px; }
+.editorjs-container h2 { font-size: 20px; border-bottom: 2px solid rgba(17, 17, 18, 0.12); }
+.editorjs-container h3 { font-size: 16px; }
+
+.editorjs-container p {
+  margin: 0;
+  padding: 8px 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.editorjs-container ul,
+.editorjs-container ol {
+  margin: 0;
+  padding: 8px 0 8px 24px;
+}
+
+.editorjs-container li {
+  margin: 4px 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* Read-only mode - hide all toolbars */
+.editorjs-container--readonly .ce-toolbar,
+.editorjs-container--readonly .ce-inline-toolbar {
+  display: none !important;
+}
+
+.editorjs-container--readonly .ce-block {
+  cursor: default;
+}

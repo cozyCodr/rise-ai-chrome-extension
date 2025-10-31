@@ -1344,21 +1344,27 @@ export class PreviewOverlay {
 
   async ensureEditorModule() {
     if (this.editorModule) return this.editorModule;
-    const cssUrl = chrome.runtime.getURL("content/lib/simple-editor.css");
-    if (!document.querySelector('link[data-rise-editor="css"]')) {
-      const link = document.createElement("link");
-      link.rel = "stylesheet";
-      link.href = cssUrl;
-      link.dataset.riseEditor = "css";
-      document.head.appendChild(link);
+    try {
+      this.editorModule = await import(
+        chrome.runtime.getURL("content/lib/editorjs-wrapper.js")
+      );
+    } catch (err) {
+      const cssUrl = chrome.runtime.getURL("content/lib/simple-editor.css");
+      if (!document.querySelector('link[data-rise-editor="css"]')) {
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = cssUrl;
+        link.dataset.riseEditor = "css";
+        document.head.appendChild(link);
+      }
+      this.editorModule = await import(
+        chrome.runtime.getURL("content/lib/simple-editor.js")
+      );
     }
-    this.editorModule = await import(
-      chrome.runtime.getURL("content/lib/simple-editor.js")
-    );
     return this.editorModule;
   }
 
-  open(entry) {
+  async open(entry) {
     this.currentEntry = entry;
     if (!this.overlay || !this.titleEl || !this.metaEl || !this.contentEl)
       return;
@@ -1375,13 +1381,74 @@ export class PreviewOverlay {
       : entry.createdAt
       ? `Generated ${entry.createdAt}`
       : "";
-    this.contentEl.innerHTML = buildResumeSectionsHtml(entry.resume);
-    this.contentEl.style.display = "";
+
+    // Convert resume to EditorJS blocks if not already converted
+    if (!entry.editorBlocks && entry.resume) {
+      const { convertResumeToEditorJS } = await import(
+        chrome.runtime.getURL("content/modules/resume-to-editorjs.js")
+      );
+      entry.editorBlocks = convertResumeToEditorJS(entry.resume);
+    }
+
+    // Render using EditorJS in read-only mode
+    await this.renderReadOnlyEditor(entry.editorBlocks || entry.editedBlocks);
+
     if (this.editorContainer) {
       this.editorContainer.hidden = true;
       this.editorContainer.innerHTML = "";
     }
     this.editing = false;
+  }
+
+  async renderReadOnlyEditor(blocks) {
+    if (!this.contentEl) {
+      console.warn("[RiseAI] No contentEl for rendering");
+      return;
+    }
+    if (!blocks) {
+      console.warn("[RiseAI] No blocks provided for rendering");
+      return;
+    }
+
+    console.log("[RiseAI] Rendering EditorJS with blocks:", {
+      blockCount: Array.isArray(blocks) ? blocks.length : blocks.blocks?.length || 0,
+      blocks: blocks
+    });
+
+    try {
+      // Clear previous editor instance
+      if (this.readOnlyEditorInstance) {
+        this.readOnlyEditorInstance.destroy?.();
+        this.readOnlyEditorInstance = null;
+      }
+
+      const { SimpleEditor } = await this.ensureEditorModule();
+      this.contentEl.innerHTML = "";
+      this.contentEl.style.display = "";
+
+      // Create read-only EditorJS instance
+      this.readOnlyEditorInstance = new SimpleEditor({
+        root: this.contentEl,
+        initialBlocks: blocks,
+      });
+
+      // Wait for editor to be ready, then make it read-only
+      await this.readOnlyEditorInstance._ready;
+      console.log("[RiseAI] EditorJS instance ready");
+
+      // Use the wrapper's readOnly API (works for both EditorJS and fallback)
+      if (this.readOnlyEditorInstance.readOnly) {
+        this.readOnlyEditorInstance.readOnly.toggle(true);
+        console.log("[RiseAI] Read-only mode enabled");
+      } else {
+        console.warn("[RiseAI] ReadOnly API not available");
+      }
+    } catch (err) {
+      console.error("[RiseAI] Failed to render EditorJS, falling back to HTML", err);
+      // Fallback to HTML rendering
+      this.contentEl.innerHTML = buildResumeSectionsHtml(this.currentEntry?.resume);
+      this.contentEl.style.display = "";
+    }
   }
 
   close() {
@@ -1396,54 +1463,82 @@ export class PreviewOverlay {
     }
     if (this.contentEl) {
       this.contentEl.style.display = "";
+      this.contentEl.innerHTML = "";
     }
     if (this.loaderEl) {
       this.loaderEl.hidden = true;
     }
+    // Clean up editor instances
+    if (this.readOnlyEditorInstance) {
+      this.readOnlyEditorInstance.destroy?.();
+      this.readOnlyEditorInstance = null;
+    }
+    if (this.editorInstance) {
+      this.editorInstance.destroy?.();
+      this.editorInstance = null;
+    }
     this.editing = false;
-    this.editorInstance = null;
     this.currentEntry = null;
   }
 
   async toggleEditing() {
     if (!this.currentEntry || !this.editorContainer) return this.currentEntry;
+
     if (!this.editing) {
+      // Entering edit mode
       const { SimpleEditor } = await this.ensureEditorModule();
-      this.editorContainer.hidden = false;
-      this.editorContainer.innerHTML = "";
+
+      // Hide read-only view
+      if (this.readOnlyEditorInstance) {
+        this.readOnlyEditorInstance.destroy?.();
+        this.readOnlyEditorInstance = null;
+      }
       if (this.contentEl) {
         this.contentEl.style.display = "none";
+        this.contentEl.innerHTML = "";
       }
+
+      // Show editable editor
+      this.editorContainer.hidden = false;
+      this.editorContainer.innerHTML = "";
+
+      // Use edited blocks if available, otherwise use original blocks
+      const blocksToEdit = this.currentEntry.editedBlocks || this.currentEntry.editorBlocks;
+
       this.editorInstance = new SimpleEditor({
         root: this.editorContainer,
-        initialHtml:
-          this.currentEntry.editedHtml ||
-          buildResumeSectionsHtml(this.currentEntry.resume),
+        initialBlocks: blocksToEdit,
       });
+
+      await this.editorInstance._ready;
       this.editorInstance.focus();
       this.editing = true;
       this.statusBadge.set("Editing mode enabled.", "info");
       return this.currentEntry;
     }
 
-    const html = this.editorInstance?.getHtml?.() ?? "";
-    this.currentEntry.editedHtml =
-      html ||
-      this.currentEntry.editedHtml ||
-      buildResumeSectionsHtml(this.currentEntry.resume);
+    // Exiting edit mode - save changes
+    if (this.editorInstance?.instance) {
+      const savedData = await this.editorInstance.instance.save();
+      this.currentEntry.editedBlocks = savedData;
+    }
+
     this.currentEntry.updatedAtMs = Date.now();
     this.currentEntry.updatedAt = new Date(
       this.currentEntry.updatedAtMs
     ).toLocaleString();
-    const summary = this.extractSummaryTitle(this.currentEntry);
-    if (summary) this.currentEntry.title = summary;
-    if (this.contentEl) {
-      this.contentEl.innerHTML = this.currentEntry.editedHtml;
-      this.contentEl.style.display = "";
+
+    // Clean up edit instance
+    if (this.editorInstance) {
+      this.editorInstance.destroy?.();
+      this.editorInstance = null;
     }
     this.editorContainer.hidden = true;
     this.editorContainer.innerHTML = "";
-    this.editorInstance = null;
+
+    // Show read-only view with updated blocks
+    await this.renderReadOnlyEditor(this.currentEntry.editedBlocks || this.currentEntry.editorBlocks);
+
     this.editing = false;
     this.statusBadge.set("Changes applied to preview.", "success");
     return this.currentEntry;
@@ -1527,13 +1622,24 @@ export class PreviewOverlay {
     this.statusBadge.set("Resume JSON downloaded.", "success");
   }
 
-  exportPdf(entry) {
-    if (!entry?.resume) {
+  async exportPdf(entry) {
+    if (!entry?.resume && !entry?.editorBlocks) {
       this.statusBadge.set("No resume to export yet.", "error");
       return;
     }
-    const sectionsHtml =
-      entry.editedHtml || buildResumeSectionsHtml(entry.resume);
+
+    // Get HTML from EditorJS blocks if available, otherwise use legacy HTML
+    let sectionsHtml;
+    if (entry.editedBlocks || entry.editorBlocks) {
+      const { convertEditorJSToHtml } = await import(
+        chrome.runtime.getURL("content/modules/editorjs-to-html.js")
+      );
+      sectionsHtml = convertEditorJSToHtml(entry.editedBlocks || entry.editorBlocks);
+    } else if (entry.editedHtml) {
+      sectionsHtml = entry.editedHtml;
+    } else {
+      sectionsHtml = buildResumeSectionsHtml(entry.resume);
+    }
     const docHtml = `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(
       entry.title ?? "Resume"
     )}</title><style>
