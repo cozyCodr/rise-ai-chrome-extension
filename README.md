@@ -99,10 +99,9 @@ rise-ai/
 
 This extension uses Gemini Nano, which has specific constraints:
 
-- Maximum 1024 tokens per prompt
 - No streaming output
-- Limited context window
 - Requires sufficient system RAM
+- Limited context window
 
 For more details, see [GEMINI_NANO_LIMITATIONS.md](GEMINI_NANO_LIMITATIONS.md)
 
@@ -113,8 +112,6 @@ Rise AI processes all data locally on your device. No data is sent to external s
 ## Development
 
 This project was built for the Google Chrome Built-in AI Challenge to showcase the capabilities of on-device AI for privacy-focused productivity tools.
-
-For the development journey, see [PROJECT_STORY.md](PROJECT_STORY.md)
 
 ## Demo
 
