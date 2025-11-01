@@ -34,7 +34,6 @@ const uiSelectors = {
   generationResumeBtn: '[data-job-modal] [data-action="generate-resume"]',
   generationCoverBtn: '[data-job-modal] [data-action="generate-cover-letter"]',
   generationCloseBtn: '[data-action="close-generation-modal"]',
-  downloadJsonBtn: '[data-action="download-resume-json"]',
   downloadPdfBtn: '[data-action="download-resume-pdf"]',
   toggleEditingBtn: '[data-action="toggle-editing"]',
   closePreviewBtn: '[data-action="close-preview"]',
@@ -255,9 +254,6 @@ class PanelApp {
       this.openGenerationModal();
     });
 
-    this.overlay?.querySelector(uiSelectors.downloadJsonBtn)?.addEventListener("click", () =>
-      this.handleDownloadJson()
-    );
     this.overlay?.querySelector(uiSelectors.downloadPdfBtn)?.addEventListener("click", () =>
       this.handleDownloadPdf()
     );
@@ -616,17 +612,6 @@ class PanelApp {
         this.generateButton.removeAttribute("data-busy");
         this.updateGenerateButtonState();
       }
-    }
-  }
-
-  handleDownloadJson() {
-    if (this.previewOverlay.editing) {
-      this.jobBadge.set("Save your edits before downloading.", "error");
-      return;
-    }
-    const current = this.previewOverlay.currentEntry;
-    if (current) {
-      this.previewOverlay.downloadJson(current);
     }
   }
 

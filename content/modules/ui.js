@@ -1,5 +1,6 @@
 import { DEFAULT_PROFILE, HistoryRepository } from "./data.js";
 
+const editorCssCache = new Map();
 const escapeHtml = (value = "") =>
   `${value}`.replace(/[&<>"']/g, (char) => {
     switch (char) {
@@ -1345,38 +1346,68 @@ export class PreviewOverlay {
 
   async ensureEditorModule() {
     if (this.editorModule) return this.editorModule;
-    let cachedStyleSheet = null;
+
+    const loadCssResource = async (href, key) => {
+      if (editorCssCache.has(key)) {
+        return editorCssCache.get(key);
+      }
+      try {
+        const response = await fetch(href);
+        const cssText = await response.text();
+        const containsImport = /@import\s+/i.test(cssText);
+        let sheet = null;
+        if (
+          !containsImport &&
+          typeof CSSStyleSheet !== "undefined" &&
+          CSSStyleSheet.prototype.replaceSync
+        ) {
+          sheet = new CSSStyleSheet();
+          sheet.replaceSync(cssText);
+          sheet.__riseEditorKey = key;
+        }
+        const resource = { sheet, cssText };
+        editorCssCache.set(key, resource);
+        return resource;
+      } catch (error) {
+        console.warn("[RiseAI] Failed to load CSS", href, error);
+        return null;
+      }
+    };
+
     const ensureCss = async (href, key) => {
+      const resource = await loadCssResource(href, key);
+      if (!resource) return;
       const install = (root) => {
         if (!root) return;
-        if (root.adoptedStyleSheets) {
-          if (!cachedStyleSheet) {
-            cachedStyleSheet = new CSSStyleSheet();
-            cachedStyleSheet.replaceSync(`@import url("${href}");`);
-            cachedStyleSheet.__riseEditorKey = key;
-          }
+        if (root.adoptedStyleSheets && resource.sheet) {
           const exists = root.adoptedStyleSheets.some(
             (sheet) => sheet?.__riseEditorKey === key
           );
           if (!exists) {
-            root.adoptedStyleSheets = [...root.adoptedStyleSheets, cachedStyleSheet];
+            root.adoptedStyleSheets = [...root.adoptedStyleSheets, resource.sheet];
           }
-        } else if (root.querySelector && !root.querySelector(`link[data-rise-editor="${key}"]`)) {
-          const link = document.createElement("link");
-          link.rel = "stylesheet";
-          link.href = href;
-          link.dataset.riseEditor = key;
-          root.appendChild(link);
+          return;
+        }
+        if (root.querySelector) {
+          const host = root instanceof Document ? root.head || root.documentElement : root;
+          if (!host || !host.querySelector) return;
+          if (host.querySelector(`style[data-rise-editor="${key}"]`)) return;
+          const styleEl = document.createElement("style");
+          styleEl.dataset.riseEditor = key;
+          styleEl.textContent = resource.cssText;
+          host.appendChild(styleEl);
         }
       };
+
       install(document);
       const shadowRoot = this.editorContainer?.getRootNode?.();
       if (shadowRoot instanceof ShadowRoot) {
         install(shadowRoot);
       }
     };
+
     try {
-      ensureCss(
+      await ensureCss(
         chrome.runtime.getURL("content/lib/editorjs/editor.css"),
         "editorjs"
       );
@@ -1384,9 +1415,9 @@ export class PreviewOverlay {
         chrome.runtime.getURL("content/lib/editorjs-wrapper.js")
       );
     } catch (err) {
-      ensureCss(
+      await ensureCss(
         chrome.runtime.getURL("content/lib/simple-editor.css"),
-        "simple"
+        "simple-editor"
       );
       this.editorModule = await import(
         chrome.runtime.getURL("content/lib/simple-editor.js")
@@ -1659,98 +1690,140 @@ export class PreviewOverlay {
     return text ? `${text.slice(0, 64)}${text.length > 64 ? "..." : ""}` : "";
   }
 
-  downloadJson(entry) {
-    if (!entry?.resume) {
-      this.statusBadge.set("No resume to download yet.", "error");
-      return;
-    }
-    const blob = new Blob([JSON.stringify(entry.resume, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${entry.id || "resume"}.json`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    this.statusBadge.set("Resume JSON downloaded.", "success");
-  }
-
   async exportPdf(entry) {
-    if (!entry?.resume && !entry?.editorBlocks) {
+    const isCoverLetter = entry?.type === "cover-letter";
+
+    if (!isCoverLetter && !entry?.resume && !entry?.editorBlocks && !entry?.editedHtml) {
       this.statusBadge.set("No resume to export yet.", "error");
       return;
     }
-
-    // Get HTML from EditorJS blocks if available, otherwise use legacy HTML
-    let sectionsHtml;
-    if (entry.editedBlocks || entry.editorBlocks) {
-      const { convertEditorJSToHtml } = await import(
-        chrome.runtime.getURL("content/modules/editorjs-to-html.js")
-      );
-      sectionsHtml = convertEditorJSToHtml(entry.editedBlocks || entry.editorBlocks);
-    } else if (entry.editedHtml) {
-      sectionsHtml = entry.editedHtml;
-    } else {
-      sectionsHtml = buildResumeSectionsHtml(entry.resume);
-    }
-    const docHtml = `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(
-      entry.title ?? "Resume"
-    )}</title><style>
-      body{font-family:'Inter','Segoe UI',system-ui,sans-serif;margin:40px;color:#111214;}
-      h1{margin:0 0 12px;font-size:22px;}
-      h2{margin:4px 0 24px;font-size:13px;color:#5b5c5f;}
-      .preview-section{border-bottom:1px solid rgba(17,17,18,0.12);padding-bottom:16px;margin-bottom:20px;}
-      .preview-section:last-of-type{border-bottom:none;margin-bottom:0;}
-      .preview-section__title{margin:0 0 12px;font-size:14px;letter-spacing:0.08em;text-transform:uppercase;}
-      .preview-section__paragraph{margin:0 0 10px;font-size:13px;line-height:1.6;}
-      .preview-experience__item{margin-bottom:14px;}
-      .preview-experience__header{font-weight:600;font-size:13px;display:flex;gap:8px;flex-wrap:wrap;}
-      .preview-experience__meta{font-size:12px;color:#5b5c5f;display:flex;gap:12px;margin-top:4px;flex-wrap:wrap;}
-      .preview-experience__bullets{margin:8px 0 0 18px;font-size:13px;}
-      .preview-skill-list{display:flex;flex-wrap:wrap;gap:8px;}
-      .preview-skill{padding:6px 10px;border-radius:999px;background:#f3f4f6;font-size:12px;}
-      .preview-education__item{margin-bottom:16px;font-size:13px;}
-      .preview-education__degree{font-weight:600;}
-      .preview-education__institution{color:#5b5c5f;margin-top:2px;}
-      .preview-education__dates{color:#5b5c5f;font-size:12px;margin-top:4px;}
-      .preview-education__highlights{margin:8px 0 0 18px;font-size:13px;}
-    </style></head><body><h1>${escapeHtml(entry.title ?? "Resume")}</h1><h2>${
-      entry.updatedAt
-        ? `Updated ${escapeHtml(entry.updatedAt)}`
-        : entry.createdAt
-        ? `Generated ${escapeHtml(entry.createdAt)}`
-        : ""
-    }</h2>${sectionsHtml}</body></html>`;
-    const printWindow = window.open(
-      "",
-      "_blank",
-      "noopener=yes,width=900,height=1120"
-    );
-    if (!printWindow) {
-      this.statusBadge.set(
-        "Pop-up blocked. Allow pop-ups to export PDF.",
-        "error"
-      );
+    if (isCoverLetter && !entry?.letterHtml && !entry?.letterText) {
+      this.statusBadge.set("No cover letter to export yet.", "error");
       return;
     }
-    printWindow.document.open();
-    printWindow.document.write(docHtml);
-    printWindow.document.close();
-    printWindow.focus();
-    setTimeout(() => {
-      try {
-        printWindow.print();
-        this.statusBadge.set("Print dialog opened for PDF export.", "success");
-      } catch (error) {
-        console.error("[RiseAI] PDF export failed", error);
-        this.statusBadge.set("Unable to export to PDF.", "error");
+
+    const autoPrintScript = "<script>window.addEventListener('load', function(){ setTimeout(function(){ window.print(); }, 60); });<\/script>";
+
+    let docHtml = "";
+
+    if (isCoverLetter) {
+      const letterBody = entry.letterHtml || formatLetterHtml(entry.letterText || "");
+      docHtml = `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(
+        entry.title ?? "Cover Letter"
+      )}</title><style>
+        body{font-family:'Inter','Segoe UI',system-ui,sans-serif;margin:40px;color:#111214;}
+        h1{margin:0 0 16px;font-size:22px;}
+        .preview-letter{display:flex;flex-direction:column;gap:12px;font-size:13px;line-height:1.7;color:#1f2024;text-align:left;}
+        .preview-letter__paragraph{margin:0;}
+        .preview-letter__pre{white-space:pre-wrap;font-size:13px;line-height:1.7;color:#1f2024;margin:0;}
+      </style></head><body><h1>${escapeHtml(entry.title ?? "Cover Letter")}</h1>${letterBody}${autoPrintScript}</body></html>`;
+    } else {
+      let sectionsHtml;
+      if (entry.editedBlocks || entry.editorBlocks) {
+        const { convertEditorJSToHtml } = await import(
+          chrome.runtime.getURL("content/modules/editorjs-to-html.js")
+        );
+        sectionsHtml = convertEditorJSToHtml(entry.editedBlocks || entry.editorBlocks);
+      } else if (entry.editedHtml) {
+        sectionsHtml = entry.editedHtml;
+      } else {
+        sectionsHtml = buildResumeSectionsHtml(entry.resume);
       }
-    }, 250);
+      docHtml = `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(
+        entry.title ?? "Resume"
+      )}</title><style>
+        body{font-family:'Inter','Segoe UI',system-ui,sans-serif;margin:40px;color:#111214;}
+        h1{margin:0 0 12px;font-size:22px;}
+        h2{margin:4px 0 24px;font-size:13px;color:#5b5c5f;}
+        .preview-section{border-bottom:1px solid rgba(17,17,18,0.12);padding-bottom:16px;margin-bottom:20px;}
+        .preview-section:last-of-type{border-bottom:none;margin-bottom:0;}
+        .preview-section__title{margin:0 0 12px;font-size:14px;letter-spacing:0.08em;text-transform:uppercase;}
+        .preview-section__paragraph{margin:0 0 10px;font-size:13px;line-height:1.6;}
+        .preview-experience__item{margin-bottom:14px;}
+        .preview-experience__header{font-weight:600;font-size:13px;display:flex;gap:8px;flex-wrap:wrap;}
+        .preview-experience__meta{font-size:12px;color:#5b5c5f;display:flex;gap:12px;margin-top:4px;flex-wrap:wrap;}
+        .preview-experience__bullets{margin:8px 0 0 18px;font-size:13px;}
+        .preview-skill-list{display:flex;flex-wrap:wrap;gap:8px;}
+        .preview-skill{padding:6px 10px;border-radius:999px;background:#f3f4f6;font-size:12px;}
+        .preview-education__item{margin-bottom:16px;font-size:13px;}
+        .preview-education__degree{font-weight:600;}
+        .preview-education__institution{color:#5b5c5f;margin-top:2px;}
+        .preview-education__dates{color:#5b5c5f;font-size:12px;margin-top:4px;}
+        .preview-education__highlights{margin:8px 0 0 18px;font-size:13px;}
+      </style></head><body><h1>${escapeHtml(entry.title ?? "Resume")}</h1><h2>${
+        entry.updatedAt
+          ? `Updated ${escapeHtml(entry.updatedAt)}`
+          : entry.createdAt
+          ? `Generated ${escapeHtml(entry.createdAt)}`
+          : ""
+      }</h2>${sectionsHtml}${autoPrintScript}</body></html>`;
+    }
+
+    const supportsBlob =
+      typeof Blob !== "undefined" && typeof URL !== "undefined" && typeof URL.createObjectURL === "function";
+
+    const openPrintWindow = (target) =>
+      window.open(target, "_blank", "noopener=yes,width=900,height=1120");
+
+    let printWindow;
+    let blobUrl = null;
+
+    if (supportsBlob) {
+      const blob = new Blob([docHtml], { type: "text/html" });
+      blobUrl = URL.createObjectURL(blob);
+      printWindow = openPrintWindow(blobUrl);
+    } else {
+      printWindow = openPrintWindow("");
+    }
+
+    if (!printWindow) {
+      if (blobUrl) {
+        try {
+          URL.revokeObjectURL(blobUrl);
+        } catch (err) {
+          console.warn("[RiseAI] Failed to revoke blob URL", err);
+        }
+      }
+      this.statusBadge.set("Pop-up blocked. Allow pop-ups to export PDF.", "error");
+      return;
+    }
+
+    const cleanupBlobUrl = () => {
+      if (!blobUrl) return;
+      try {
+        URL.revokeObjectURL(blobUrl);
+      } catch (err) {
+        console.warn("[RiseAI] Failed to revoke blob URL", err);
+      }
+      blobUrl = null;
+    };
+
+    if (blobUrl) {
+      try {
+        printWindow.addEventListener(
+          "beforeunload",
+          () => {
+            cleanupBlobUrl();
+          },
+          { once: true }
+        );
+      } catch (err) {
+        setTimeout(cleanupBlobUrl, 10_000);
+      }
+    } else {
+      try {
+        printWindow.document.open();
+        printWindow.document.write(docHtml);
+        printWindow.document.close();
+      } catch (err) {
+        console.warn("[RiseAI] Failed to write PDF document", err);
+        this.statusBadge.set("Unable to prepare PDF.", "error");
+      }
+    }
+
   }
 }
+
 export class ResumeHistory {
   constructor(listEl, previewOverlay, statusBadge) {
     this.listEl = listEl;
