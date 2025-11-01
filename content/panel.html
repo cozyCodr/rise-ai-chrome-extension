@@ -27,17 +27,26 @@
     </section>
 
     <section class="panel__section panel__section--hidden" data-panel="job" role="tabpanel" aria-hidden="true">
-      <p class="panel__status" data-slot="jd-summary">No job description captured yet.</p>
-      <p class="panel__hint" data-slot="selection-hint">Highlight text on the page or paste it below.</p>
       <p class="panel__hint panel__hint--status" data-slot="generation-status"></p>
       <form class="panel__form" data-action="submit-jd">
         <textarea class="panel__textarea" data-slot="jd-input" placeholder="Paste the job description here..."></textarea>
         <div class="panel__actions panel__actions--end">
-          <button type="button" class="panel__button panel__button--ghost" data-action="use-selection">Use Highlighted Text</button>
-          <button type="button" class="panel__button panel__button--ghost" data-action="generate-resume">Generate Resume</button>
+          <button type="button" class="panel__button panel__button--primary" data-action="open-generation-modal">Generate</button>
           <button type="submit" class="panel__button">Save Description</button>
         </div>
       </form>
+      <div class="job-modal" data-job-modal hidden>
+        <div class="job-modal__scrim" data-action="close-generation-modal"></div>
+        <div class="job-modal__content" role="dialog" aria-modal="true" aria-labelledby="job-modal-title">
+          <h3 class="job-modal__title" id="job-modal-title">What would you like to generate?</h3>
+          <p class="job-modal__subtitle">Choose the document you want Rise AI to compose.</p>
+          <div class="job-modal__actions">
+            <button type="button" class="job-modal__button" data-action="generate-resume">Generate Resume</button>
+            <button type="button" class="job-modal__button job-modal__button--secondary" data-action="generate-cover-letter">Generate Cover Letter</button>
+          </div>
+          <button type="button" class="job-modal__link" data-action="close-generation-modal">Cancel</button>
+        </div>
+      </div>
     </section>
 
     <section class="panel__section panel__section--hidden" data-panel="history" role="tabpanel" aria-hidden="true">

@@ -15,9 +15,7 @@ import {
 } from "./modules/ui.js";
 
 const uiSelectors = {
-  summary: '[data-slot="jd-summary"]',
   textarea: '[data-slot="jd-input"]',
-  selectionHint: '[data-slot="selection-hint"]',
   jobStatus: '[data-slot="generation-status"]',
   profileStatus: '[data-slot="profile-status"]',
   profileSummary: '[data-slot="profile-summary"]',
@@ -31,14 +29,55 @@ const uiSelectors = {
   previewLoaderSpinner: '[data-slot="preview-loader-spinner"]',
   previewLoaderMessage: '[data-slot="preview-loader-message"]',
   openProfileBtn: '[data-action="open-profile-editor"]',
-  useSelectionBtn: '[data-action="use-selection"]',
-  generateBtn: '[data-action="generate-resume"]',
+  openGenerationBtn: '[data-action="open-generation-modal"]',
+  generationModal: '[data-job-modal]',
+  generationResumeBtn: '[data-job-modal] [data-action="generate-resume"]',
+  generationCoverBtn: '[data-job-modal] [data-action="generate-cover-letter"]',
+  generationCloseBtn: '[data-action="close-generation-modal"]',
   downloadJsonBtn: '[data-action="download-resume-json"]',
   downloadPdfBtn: '[data-action="download-resume-pdf"]',
   toggleEditingBtn: '[data-action="toggle-editing"]',
   closePreviewBtn: '[data-action="close-preview"]',
   jobForm: '[data-action="submit-jd"]',
 };
+
+const escapeHtml = (value = "") =>
+  `${value}`.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return char;
+    }
+  });
+
+const formatLetterHtml = (text = "") => {
+  const normalized = `${text}`.replace(/\r\n/g, "\n").trim();
+  if (!normalized) return "";
+  const paragraphs = normalized
+    .split(/\n\s*\n/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+  if (!paragraphs.length) {
+    return `<pre class="preview-letter__pre">${escapeHtml(normalized)}</pre>`;
+  }
+  const markup = paragraphs
+    .map((paragraph) => {
+      const htmlParagraph = escapeHtml(paragraph).replace(/\n/g, "<br>");
+      return `<p class="preview-letter__paragraph">${htmlParagraph}</p>`;
+    })
+    .join("");
+  return `<div class="preview-letter">${markup}</div>`;
+};
+
 
 
 class PanelApp {
@@ -84,9 +123,9 @@ class PanelApp {
 
     this.jobController = new JobController(
       {
-        summary: wrapper.querySelector(uiSelectors.summary),
         textarea: wrapper.querySelector(uiSelectors.textarea),
-        selectionHint: wrapper.querySelector(uiSelectors.selectionHint),
+        summary: null,
+        selectionHint: null,
       },
       this.jobBadge
     );
@@ -115,7 +154,14 @@ class PanelApp {
 
     this.tabs = Array.from(wrapper.querySelectorAll("[data-tab]"));
     this.panels = Array.from(wrapper.querySelectorAll("[data-panel]"));
-    this.generateButton = wrapper.querySelector(uiSelectors.generateBtn);
+    this.openGenerationButton = wrapper.querySelector(uiSelectors.openGenerationBtn);
+    this.generationModal = wrapper.querySelector(uiSelectors.generationModal);
+    this.generationResumeButton = wrapper.querySelector(uiSelectors.generationResumeBtn);
+    this.generationCoverButton = wrapper.querySelector(uiSelectors.generationCoverBtn);
+    this.generationCloseButtons = Array.from(
+      wrapper.querySelectorAll(uiSelectors.generationCloseBtn)
+    );
+    this.generateButton = this.openGenerationButton;
     this.openProfileButton = wrapper.querySelector(uiSelectors.openProfileBtn);
     this.boundOnHistoryClick = this.onHistoryClick.bind(this);
   }
@@ -205,12 +251,8 @@ class PanelApp {
     });
 
 
-    this.wrapper.querySelector(uiSelectors.useSelectionBtn)?.addEventListener("click", () => {
-      this.handleUseSelection();
-    });
-
-    this.generateButton?.addEventListener("click", () => {
-      this.handleGenerate();
+    this.openGenerationButton?.addEventListener("click", () => {
+      this.openGenerationModal();
     });
 
     this.overlay?.querySelector(uiSelectors.downloadJsonBtn)?.addEventListener("click", () =>
@@ -236,6 +278,19 @@ class PanelApp {
     this.wrapper.querySelector(uiSelectors.jobForm)?.addEventListener("submit", (event) => {
       event.preventDefault();
       this.handleJobSave();
+    });
+
+    this.generationResumeButton?.addEventListener("click", () => {
+      this.closeGenerationModal();
+      this.handleGenerate();
+    });
+
+    this.generationCoverButton?.addEventListener("click", () => {
+      this.handleGenerateCoverLetter();
+    });
+
+    this.generationCloseButtons.forEach((button) => {
+      button.addEventListener("click", () => this.closeGenerationModal());
     });
 
     this.tabs.forEach((button) => {
@@ -367,7 +422,24 @@ class PanelApp {
     await this.commitJobDescription(text, "selection");
   }
 
+  openGenerationModal() {
+    if (!this.generationModal) {
+      this.handleGenerate();
+      return;
+    }
+    this.generationModal.hidden = false;
+    this.openGenerationButton?.setAttribute("aria-expanded", "true");
+  }
+
+  closeGenerationModal() {
+    if (this.generationModal) {
+      this.generationModal.hidden = true;
+    }
+    this.openGenerationButton?.setAttribute("aria-expanded", "false");
+  }
+
   async handleGenerate() {
+    this.closeGenerationModal();
     if (!this.profileManager.hasProfileData()) {
       const profileMessage = "Add your profile details in the Profile tab before generating.";
       this.profileBadge.set(profileMessage, "error");
@@ -461,6 +533,92 @@ class PanelApp {
     }
   }
 
+  async handleGenerateCoverLetter() {
+    this.closeGenerationModal();
+    if (!this.profileManager.hasProfileData()) {
+      const profileMessage = "Add your profile details in the Profile tab before generating.";
+      this.profileBadge.set(profileMessage, "error");
+      this.jobBadge.set(profileMessage, "error");
+      this.switchTab("profile");
+      this.openProfileButton?.focus({ preventScroll: true });
+      return;
+    }
+    if (!this.jobController.currentJob?.text) {
+      this.jobBadge.set("Add or paste a job description before generating.", "error");
+      this.switchTab("job");
+      return;
+    }
+    console.info("[RiseAI] cover letter generation requested", {
+      jobLength: this.jobController.currentJob?.text?.length ?? 0,
+      profileReady: this.profileManager.hasProfileData(),
+      timestamp: new Date().toISOString(),
+    });
+
+    const panelWasOpen = this.panelOpen;
+    this.wasPanelOpenBeforePreview = panelWasOpen;
+    if (panelWasOpen) {
+      this.closePanel();
+    }
+    this.previewOverlay.showLoading("Drafting your cover letter with Gemini Nano...");
+    this.jobBadge.set("Generating cover letter with Gemini Nano...", "info");
+
+    if (this.generateButton) {
+      this.generateButton.disabled = true;
+      this.generateButton.setAttribute("data-busy", "true");
+    }
+
+    try {
+      const response = await GeminiBridge.generateCoverLetter({ temperature: 0.35, topK: 32 });
+      const result = response.payload ?? {};
+      const letterText = (result.letter ?? result.rawText ?? "").trim();
+      if (!letterText) {
+        this.previewOverlay.showMessage({
+          title: "No response from Gemini",
+          body: "Gemini returned an empty cover letter. Try adjusting the job description or refreshing your profile.",
+          tone: "error",
+        });
+        this.jobBadge.set("Gemini returned an empty response. Try again.", "error");
+        return;
+      }
+
+      const timestamp = Date.now();
+      const letterHtml = formatLetterHtml(letterText);
+      const entry = {
+        id: `letter-${timestamp}`,
+        type: "cover-letter",
+        title: "Cover Letter generated",
+        createdAtMs: timestamp,
+        createdAt: new Date(timestamp).toLocaleString(),
+        updatedAtMs: timestamp,
+        updatedAt: new Date(timestamp).toLocaleString(),
+        letterText,
+        letterHtml,
+        metadata: result.metadata ?? null,
+        rawText: result.rawText ?? letterText,
+        resume: null,
+        editedHtml: null,
+      };
+      const saved = await this.history.add(entry);
+      await this.previewOverlay.open(saved);
+      this.jobBadge.set("Cover letter ready.", "success");
+    } catch (error) {
+      console.error("[RiseAI] cover letter generation failed", error);
+      const message =
+        typeof error?.message === "string" ? error.message : "Cover letter generation failed.";
+      this.previewOverlay.showMessage({
+        title: "Generation failed",
+        body: message,
+        tone: "error",
+      });
+      this.jobBadge.set(message, "error");
+    } finally {
+      if (this.generateButton) {
+        this.generateButton.removeAttribute("data-busy");
+        this.updateGenerateButtonState();
+      }
+    }
+  }
+
   handleDownloadJson() {
     if (this.previewOverlay.editing) {
       this.jobBadge.set("Save your edits before downloading.", "error");
@@ -487,6 +645,10 @@ class PanelApp {
     const current = this.previewOverlay.currentEntry;
     if (!current) {
       this.jobBadge.set("Open a resume preview before editing.", "error");
+      return;
+    }
+    if (current.type === "cover-letter") {
+      this.jobBadge.set("Editing cover letters isn't supported yet.", "info");
       return;
     }
     const updated = await this.previewOverlay.toggleEditing();

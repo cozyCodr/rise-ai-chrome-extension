@@ -6,6 +6,7 @@ import {
   setJobState,
 } from "./background/state.js";
 import { buildResumePrompt } from "./background/generation/prompt-template.js";
+import { buildCoverLetterPrompt } from "./background/generation/cover-letter-template.js";
 import {
   availabilityViaOffscreen,
   generateViaOffscreen,
@@ -167,6 +168,45 @@ registerHandler("rise:generator:resume", async (payload = {}) => {
   };
 });
 
+registerHandler("rise:generator:cover-letter", async (payload = {}) => {
+  console.info("[RiseAI] background cover letter generation", {
+    timestamp: new Date().toISOString(),
+  });
+
+  const prompt = await buildCoverLetterPrompt();
+  const generation = await generateViaOffscreen({
+    options: {
+      systemPrompt: prompt.systemPrompt,
+      temperature: payload.temperature ?? 0.35,
+      topK: payload.topK ?? 32,
+    },
+    messages: Array.isArray(payload.messages) ? payload.messages : [],
+    prompt: prompt.userPrompt,
+  });
+
+  if (!generation?.text) {
+    throw new Error("Gemini returned an empty response.");
+  }
+
+  const letterText = generation.text.trim();
+  if (!letterText) {
+    throw new Error("Gemini returned an empty cover letter.");
+  }
+
+  return {
+    type: "rise:generator:cover-letter",
+    payload: {
+      letter: letterText,
+      metadata: {
+        prompt,
+        finishReason: generation?.finishReason ?? null,
+        usage: generation?.usage ?? null,
+      },
+      rawText: generation.text,
+    },
+  };
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (typeof message?.type === "string" && message.type.startsWith("offscreen:")) {
     return false;
@@ -190,5 +230,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse?.({ ok: false, error: error.message });
   }
 });
-
 

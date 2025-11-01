@@ -241,6 +241,17 @@
   transform: translateY(0);
 }
 
+.panel__button--primary {
+  background: linear-gradient(135deg, #111214, #25282f);
+  color: #f8f8f9;
+  font-weight: 600;
+}
+
+.panel__button--primary:hover {
+  background: linear-gradient(135deg, #181b21, #30333a);
+  box-shadow: 0 16px 32px rgba(12, 13, 17, 0.3);
+}
+
 .panel__button[disabled],
 .panel__button:disabled {
   opacity: 0.45;
@@ -936,6 +947,30 @@ form.profile-form { display: flex; flex-direction: column; gap: 18px; }
 
 
 
+
+.preview-letter {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #1f2024;
+  text-align: left;
+}
+
+.preview-letter__paragraph {
+  margin: 0;
+}
+
+.preview-letter__pre {
+  background: transparent;
+  padding: 0;
+  border: none;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #1f2024;
+  white-space: pre-wrap;
+}
 /* Minimal profile summary card */
 .profile-summary__card {
   border: 1px solid rgba(17, 17, 18, 0.08);
@@ -961,4 +996,91 @@ form.profile-form { display: flex; flex-direction: column; gap: 18px; }
 .profile-summary__meta {
   font-size: 12px;
   color: #6b6c70;
+}
+
+.job-modal[hidden] {
+  display: none;
+}
+
+.job-modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2147483647;
+}
+
+.job-modal__scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(12, 13, 17, 0.56);
+}
+
+.job-modal__content {
+  position: relative;
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 24px 28px;
+  width: min(260px, 80vw);
+  box-shadow: 0 30px 60px rgba(15, 16, 19, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  text-align: center;
+}
+
+.job-modal__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #111214;
+}
+
+.job-modal__subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: #3f4045;
+}
+
+.job-modal__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.job-modal__button {
+  border: none;
+  border-radius: 12px;
+  padding: 12px 16px;
+  font: 600 14px/1.2 "Inter", "Segoe UI", system-ui, sans-serif;
+  background: linear-gradient(135deg, #111214, #22252a);
+  color: #f8f8f9;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.job-modal__button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(17, 18, 24, 0.2);
+}
+
+.job-modal__button--secondary {
+  background: #f4f5f7;
+  color: #1f2024;
+  border: 1px solid rgba(17, 17, 18, 0.12);
+}
+
+.job-modal__button--secondary:hover {
+  background: #e9eaee;
+  box-shadow: none;
+}
+
+.job-modal__link {
+  border: none;
+  background: none;
+  color: #4c5fd7;
+  font: 500 13px/1.2 "Inter", "Segoe UI", system-ui, sans-serif;
+  cursor: pointer;
+  padding: 0;
 }

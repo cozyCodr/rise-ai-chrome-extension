@@ -236,6 +236,24 @@ export const GeminiBridge = {
       throw error;
     }
   },
+  async generateCoverLetter(payload = {}) {
+    console.info("[RiseAI] GeminiBridge.generateCoverLetter", {
+      temperature: payload?.temperature,
+      topK: payload?.topK,
+    });
+    try {
+      const response = await sendRuntimeMessage("rise:generator:cover-letter", payload);
+      console.info("[RiseAI] GeminiBridge.generateCoverLetter response", {
+        hasLetter: !!response?.payload?.letter,
+        finishReason: response?.payload?.metadata?.finishReason ?? null,
+      });
+      return response;
+    } catch (error) {
+      console.error("[RiseAI] GeminiBridge.generateCoverLetter error", error);
+      throw error;
+    }
+  },
+
 };
 
 const normaliseEntries = (entries) =>

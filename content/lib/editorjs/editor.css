@@ -1,0 +1,147 @@
+/* Editor.js custom styling for Rise AI */
+.editorjs-container {
+  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+  color: #1a1b1d;
+}
+
+.editorjs-container .ce-block {
+  border: none;
+  box-shadow: none;
+  margin: 0;
+}
+
+.editorjs-container .ce-block__content {
+  max-width: 100%;
+  margin-left: 0;
+  margin-right: 0;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+}
+
+.editorjs-container .ce-paragraph {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #1f2024;
+}
+
+.editorjs-container .ce-header {
+  font-weight: 600;
+  color: #111214;
+  margin: 12px 0 4px;
+}
+
+.editorjs-container .ce-header[data-level="2"]{
+  font-size: 18px;
+}
+
+.editorjs-container .ce-header[data-level="3"]{
+  font-size: 16px;
+}
+
+.editorjs-container .ce-header[data-level="4"]{
+  font-size: 14px;
+}
+
+.editorjs-container ul.ce-list {
+  margin: 8px 0 8px 20px;
+  padding: 0;
+}
+
+.editorjs-container ul.ce-list li {
+  margin: 4px 0;
+}
+
+.ce-inline-toolbar,
+.editorjs-container .ce-inline-toolbar {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  flex-direction: row;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 10px;
+  background: rgba(20, 21, 24, 0.94);
+  box-shadow: 0 12px 32px rgba(8, 9, 11, 0.32);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  z-index: 30;
+}
+
+.ce-inline-toolbar--showed {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.ce-inline-toolbar__buttons,
+.editorjs-container .ce-inline-toolbar__buttons {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+}
+
+.ce-inline-toolbar__buttons .ce-inline-tool,
+.editorjs-container .ce-inline-toolbar__buttons .ce-inline-tool {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #f8f8f9;
+  transition: background 0.15s ease;
+}
+
+.ce-inline-toolbar__buttons .ce-inline-tool:hover,
+.editorjs-container .ce-inline-toolbar__buttons .ce-inline-tool:hover {
+  background: rgba(248, 248, 249, 0.14);
+}
+
+.ce-toolbar,
+.editorjs-container .ce-toolbar {
+  left: -44px;
+  top: 4px;
+}
+
+.ce-toolbar__plus,
+.editorjs-container .ce-toolbar__plus,
+.ce-toolbar__settings-btn,
+.editorjs-container .ce-toolbar__settings-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid rgba(17, 17, 18, 0.12);
+  background: #ffffff;
+  color: #1f2024;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.ce-toolbar__plus:hover,
+.editorjs-container .ce-toolbar__plus:hover,
+.ce-toolbar__settings-btn:hover,
+.editorjs-container .ce-toolbar__settings-btn:hover {
+  background: rgba(17, 17, 18, 0.08);
+  border-color: rgba(17, 17, 18, 0.18);
+}
+
+.editorjs-container .ce-block--selected .ce-block__content,
+.ce-block--selected .ce-block__content,
+.editorjs-container .ce-block:hover .ce-block__content,
+.ce-block:hover .ce-block__content {
+  background: rgba(17, 17, 18, 0.04);
+  border-radius: 12px;
+  transition: background 0.2s ease;
+}
+
+.editorjs-container--readonly .ce-toolbar,
+.editorjs-container--readonly .ce-inline-toolbar,
+.editorjs-container--readonly .ce-block__actions {
+  display: none !important;
+}

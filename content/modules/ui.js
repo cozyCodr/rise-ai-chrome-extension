@@ -1340,23 +1340,54 @@ export class PreviewOverlay {
     this.editing = false;
     this.editorInstance = null;
     this.editorModule = null;
+    this.readOnlyEditorInstance = null;
   }
 
   async ensureEditorModule() {
     if (this.editorModule) return this.editorModule;
+    let cachedStyleSheet = null;
+    const ensureCss = async (href, key) => {
+      const install = (root) => {
+        if (!root) return;
+        if (root.adoptedStyleSheets) {
+          if (!cachedStyleSheet) {
+            cachedStyleSheet = new CSSStyleSheet();
+            cachedStyleSheet.replaceSync(`@import url("${href}");`);
+            cachedStyleSheet.__riseEditorKey = key;
+          }
+          const exists = root.adoptedStyleSheets.some(
+            (sheet) => sheet?.__riseEditorKey === key
+          );
+          if (!exists) {
+            root.adoptedStyleSheets = [...root.adoptedStyleSheets, cachedStyleSheet];
+          }
+        } else if (root.querySelector && !root.querySelector(`link[data-rise-editor="${key}"]`)) {
+          const link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = href;
+          link.dataset.riseEditor = key;
+          root.appendChild(link);
+        }
+      };
+      install(document);
+      const shadowRoot = this.editorContainer?.getRootNode?.();
+      if (shadowRoot instanceof ShadowRoot) {
+        install(shadowRoot);
+      }
+    };
     try {
+      ensureCss(
+        chrome.runtime.getURL("content/lib/editorjs/editor.css"),
+        "editorjs"
+      );
       this.editorModule = await import(
         chrome.runtime.getURL("content/lib/editorjs-wrapper.js")
       );
     } catch (err) {
-      const cssUrl = chrome.runtime.getURL("content/lib/simple-editor.css");
-      if (!document.querySelector('link[data-rise-editor="css"]')) {
-        const link = document.createElement("link");
-        link.rel = "stylesheet";
-        link.href = cssUrl;
-        link.dataset.riseEditor = "css";
-        document.head.appendChild(link);
-      }
+      ensureCss(
+        chrome.runtime.getURL("content/lib/simple-editor.css"),
+        "simple"
+      );
       this.editorModule = await import(
         chrome.runtime.getURL("content/lib/simple-editor.js")
       );
@@ -1375,12 +1406,33 @@ export class PreviewOverlay {
     if (this.loaderEl) {
       this.loaderEl.hidden = true;
     }
-    this.titleEl.textContent = entry.title ?? "Resume Preview";
+    const isCoverLetter = entry?.type === "cover-letter";
+    this.titleEl.textContent = entry.title ?? (isCoverLetter ? "Cover Letter Preview" : "Resume Preview");
     this.metaEl.textContent = entry.updatedAt
       ? `Updated ${entry.updatedAt}`
       : entry.createdAt
       ? `Generated ${entry.createdAt}`
       : "";
+
+    if (isCoverLetter) {
+      if (this.readOnlyEditorInstance) {
+        this.readOnlyEditorInstance.destroy?.();
+        this.readOnlyEditorInstance = null;
+      }
+      if (this.contentEl) {
+        const html =
+          entry.letterHtml ||
+          `<pre class="preview-letter__pre">${escapeHtml(entry.letterText ?? "")}</pre>`;
+        this.contentEl.innerHTML = html;
+        this.contentEl.style.display = "";
+      }
+      if (this.editorContainer) {
+        this.editorContainer.hidden = true;
+        this.editorContainer.innerHTML = "";
+      }
+      this.editing = false;
+      return;
+    }
 
     // Convert resume to EditorJS blocks if not already converted
     if (!entry.editorBlocks && entry.resume) {
@@ -1483,6 +1535,10 @@ export class PreviewOverlay {
 
   async toggleEditing() {
     if (!this.currentEntry || !this.editorContainer) return this.currentEntry;
+    if (this.currentEntry?.type === "cover-letter") {
+      this.statusBadge?.set("Editing cover letters isn't supported yet.", "info");
+      return this.currentEntry;
+    }
 
     if (!this.editing) {
       // Entering edit mode
