@@ -1,57 +1,119 @@
 import { getJobState, getContextState } from "../state.js";
-import { findRelevantChunks } from "../search/chunk-retrieval.js";
-import { estimateTokens, calculatePromptTokens, calculateMaxChunks, GEMINI_NANO_LIMITS } from "./token-counter.js";
+import { estimateTokens, calculatePromptTokens, GEMINI_NANO_LIMITS } from "./token-counter.js";
 
 const BASE_SYSTEM_PROMPT = `You are Rise AI, an on-device assistant that composes tailored resumes.
 - Output must be valid JSON following the provided schema.
 - Highlight measurable achievements when possible.
-- Stay truthful to the supplied context; never fabricate.
-- Treat the job description strictly as the target role -- never copy its responsibilities as the candidate's work history.
-- Keep the professional summary concise (no more than 2 sentences) and grounded in proven accomplishments from the context.
-- Prioritise experience, projects, and education details; present skills succinctly and avoid filler.`;
+- Stay truthful to the supplied profile data; never fabricate.
+- CRITICAL: The job description is ONLY for understanding what to emphasize. NEVER copy responsibilities, requirements, or any details from the job description into the resume. Only use information from the PROFILE SNAPSHOT.
+- CRITICAL: Do not invent or add experiences, skills, or qualifications that are not explicitly mentioned in the PROFILE SNAPSHOT, even if they appear in the job description.
+- Keep the professional summary concise (no more than 2 sentences) and grounded in proven accomplishments from the profile.
+- Prioritise experience, projects, and education details; present skills succinctly and avoid filler.
+- IMPORTANT: Before the JSON output, add a single line with format "title::Company Name Resume - Candidate Full Name" where Company Name comes from the job description and Candidate Full Name comes from the profile.`;
 
-const DUMMY_JOHN_DOE_CHUNKS = [
-  {
-    id: "dummy-1",
-    docId: "john-doe-resume.pdf",
-    text: "JOHN DOE\njohndoe@email.com | +1 555-0123 | linkedin.com/in/johndoe | github.com/johndoe\n\nProfessional Summary\nSenior Software Engineer with 8+ years of experience building scalable web applications. Specialized in React, TypeScript, and Node.js. Led teams of 5-10 engineers and delivered products serving 1M+ users."
-  },
-  {
-    id: "dummy-2",
-    docId: "john-doe-resume.pdf",
-    text: "Experience\n\nSenior Frontend Engineer | TechCorp Inc. | San Francisco, CA | 2020 - Present\n- Led development of e-commerce platform using React and TypeScript, increasing conversion rate by 35%\n- Architected component library used across 12 products, reducing development time by 40%\n- Mentored 5 junior engineers and conducted weekly code reviews\n- Implemented automated testing pipeline, achieving 90% code coverage"
-  },
-  {
-    id: "dummy-3",
-    docId: "john-doe-resume.pdf",
-    text: "Frontend Developer | StartupXYZ | Austin, TX | 2017 - 2020\n- Built responsive web applications serving 500K+ monthly active users\n- Optimized bundle size from 3MB to 800KB, improving load time by 60%\n- Integrated third-party APIs including Stripe, Auth0, and AWS\n- Collaborated with design team to implement pixel-perfect UI/UX\n\nSkills: React, TypeScript, JavaScript, Node.js, PostgreSQL, AWS, Docker, Git, REST APIs, GraphQL, CI/CD"
+const MAX_BULLETS = 4;
+
+const clampArray = (value = [], limit = Infinity) =>
+  (Array.isArray(value) ? value : [value])
+    .map((item) => (typeof item === "string" ? item.trim() : item))
+    .filter(Boolean)
+    .slice(0, limit);
+
+const buildProfileSnapshot = (profile) => {
+  if (!profile || typeof profile !== "object") return "";
+  const header = profile.header || {};
+  const lines = [];
+
+  const name = header.fullName ? header.fullName.trim() : "";
+  const email = header.email ? header.email.trim() : "";
+  const phone = header.phone ? header.phone.trim() : "";
+  const location = header.location ? header.location.trim() : "";
+  const linkedin = header.linkedin ? header.linkedin.trim() : "";
+  const github = header.github ? header.github.trim() : "";
+  const portfolio = header.portfolio ? header.portfolio.trim() : "";
+  const headline = header.headline ? header.headline.trim() : "";
+
+  if (name) lines.push(`Name: ${name}`);
+  if (email) lines.push(`Email: ${email}`);
+  if (phone) lines.push(`Phone: ${phone}`);
+  if (location) lines.push(`Location: ${location}`);
+  if (linkedin) lines.push(`LinkedIn: ${linkedin}`);
+  if (github) lines.push(`GitHub: ${github}`);
+  if (portfolio) lines.push(`Portfolio: ${portfolio}`);
+  if (headline) lines.push(`Headline: ${headline}`);
+
+  const summary = profile.summary ? profile.summary.trim() : "";
+  if (summary) {
+    lines.push(`Summary: ${summary}`);
   }
-];
 
-// Set to true to use dummy data for testing
-const USE_DUMMY_DATA = false;
+  const experiences = Array.isArray(profile.experience) ? profile.experience : [];
+  clampArray(experiences, 5).forEach((exp, index) => {
+    if (!exp) return;
+    const role = exp.title || exp.role || "Role";
+    const company = exp.company || exp.organisation || exp.organization || "";
+    const dates = exp.dates || "";
+    const location = exp.location || "";
+    const bullets = clampArray(exp.highlights || exp.bullets || [], MAX_BULLETS);
+    const heading = company ? `${role} at ${company}` : role;
+    const sectionLines = [`Experience ${index + 1}: ${heading}`];
+    if (dates) sectionLines.push(`Dates: ${dates}`);
+    if (location) sectionLines.push(`Location: ${location}`);
+    bullets.forEach((point) => {
+      sectionLines.push(`- ${point}`);
+    });
+    lines.push(sectionLines.join("\n"));
+  });
 
-const MAX_CONTEXT_CHARS = 450;
+  const projects = Array.isArray(profile.projects) ? profile.projects : [];
+  clampArray(projects, 4).forEach((project, index) => {
+    if (!project) return;
+    const title = project.title || project.name || `Project ${index + 1}`;
+    const description = project.description || "";
+    const impact = project.impact || "";
+    const link = project.link || "";
+    const dates = project.dates || "";
+    const info = [`Project ${index + 1}: ${title}`];
+    if (description) info.push(`Description: ${description}`);
+    if (impact) info.push(`Impact: ${impact}`);
+    if (link) info.push(`Link: ${link}`);
+    if (dates) info.push(`Dates: ${dates}`);
+    lines.push(info.join("\n"));
+  });
 
-const cleanChunkText = (text) => {
-  const normalized = (text ?? "").replace(/\s+/g, " ").trim();
-  if (!normalized) return "";
-  if (normalized.length <= MAX_CONTEXT_CHARS) return normalized;
-  return `${normalized.slice(0, MAX_CONTEXT_CHARS - 3).trimEnd()}...`;
+  const skills = Array.isArray(profile.skills) ? profile.skills : [];
+  if (skills.length) {
+    lines.push(`Skills: ${clampArray(skills, 15).join(", ")}`);
+  }
+
+  const education = Array.isArray(profile.education) ? profile.education : [];
+  clampArray(education, 3).forEach((edu, index) => {
+    if (!edu) return;
+    const degree = edu.degree || "";
+    const institution = edu.institution || "";
+    const dates = edu.dates || "";
+    const highlights = clampArray(edu.highlights || [], 3);
+    const info = [`Education ${index + 1}${degree ? `: ${degree}` : ""}`];
+    if (institution) info.push(`Institution: ${institution}`);
+    if (dates) info.push(`Dates: ${dates}`);
+    highlights.forEach((highlight) => {
+      info.push(`- ${highlight}`);
+    });
+    lines.push(info.join("\n"));
+  });
+
+  const certifications = Array.isArray(profile.certifications) ? profile.certifications : [];
+  if (certifications.length) {
+    lines.push(`Certifications/Achievements: ${clampArray(certifications, 5).join(", ")}`);
+  }
+
+  return lines.join("\n\n");
 };
 
-const buildContextSummary = (chunks) =>
-  chunks
-    .map((chunk, idx) => {
-      const safeText = cleanChunkText(chunk.text);
-      return `Context #${idx + 1} (document: ${chunk.docId ?? "unknown"})\n${safeText}`;
-    })
-    .join("\n\n");
+const composeUserPrompt = ({ jobText, profileSnapshot, instructions }) =>
+  `JOB DESCRIPTION (target role, do not copy verbatim):\n${jobText}\n\nPROFILE SNAPSHOT (authoritative data):\n${profileSnapshot}${instructions}`;
 
-const composeUserPrompt = ({ jobText, chunks, instructions }) =>
-  `JOB DESCRIPTION (target role, do not copy verbatim):\n${jobText}\n\nQUALIFICATION CONTEXT (candidate evidence):\n${buildContextSummary(chunks)}${instructions}`;
-
-export const buildResumePrompt = async ({ chunkLimit = 12 } = {}) => {
+export const buildResumePrompt = async ({ chunkLimit = 50 } = {}) => {
   const [job, context] = await Promise.all([getJobState(), getContextState()]);
   if (!job?.text) {
     throw new Error("Job description is missing. Add or paste one before generating.");
@@ -63,6 +125,16 @@ export const buildResumePrompt = async ({ chunkLimit = 12 } = {}) => {
 JSON schema:
 {
   "version": string,
+  "header": {
+    "fullName": string,
+    "email"?: string,
+    "phone"?: string,
+    "location"?: string,
+    "linkedin"?: string,
+    "github"?: string,
+    "portfolio"?: string,
+    "headline"?: string
+  },
   "sections": [
     {
       "id": string,
@@ -73,99 +145,56 @@ JSON schema:
 }
 
 Section expectations:
+- header: required object with candidate contact info and headline from profile.
 - summary: content is an array of paragraphs (strings).
 - experience: content is an array of objects { title, company?, location?, dates?, bullets[] }.
 - projects: content is an array of objects { title, description?, impact?, link?, dates? }.
 - skills: content is an array of strings.
-- education: content is an array of objects { degree?, institution?, dates?, highlights? }.`;
+- education: content is an array of objects { degree?, institution?, dates?, highlights? }.
+- certifications: content is an array of strings for certifications/achievements.`;
 
-  // Calculate safe chunk limit based on token budget
   const instructions = `
 
 INSTRUCTIONS:
-1. Job description is for alignment only. Do not present it as part of the candidate's prior roles.
-2. Summary must contain no more than 2 sentences (ideally exactly 2) that highlight quantified wins backed by the context snippets.
-3. Experience entries must reference real employers, roles, and outcomes drawn from the context; keep standalone project work in the projects section instead of experience.
-4. Add a "projects" section when the context mentions notable initiatives, using objects { title, description, impact? }. Omit the section if no projects exist.
-5. Skills should be a concise list of up to 10 items derived from the context and relevant to the job description.
-6. Education should capture degrees, institutions, dates, and honours exactly as provided in the context.
-7. Omit sections you cannot substantiate from the context rather than fabricating content.
+1. FIRST LINE: Output a title line in this exact format: "title::Company Name Resume - Candidate Full Name" (e.g., "title::Playmerce Resume - John Doe"). Extract the company name from the job description and the candidate's full name from the profile.
+2. SECOND LINE ONWARD: Output valid JSON following the schema above.
+3. The job description is ONLY a reference to understand what aspects of the candidate's background to emphasize. DO NOT copy any responsibilities, skills, or requirements from the job description into the resume.
+4. ONLY include information that is explicitly stated in the PROFILE SNAPSHOT sections above. If something is not mentioned in the profile, DO NOT add it to the resume, even if it appears in the job description.
+5. Header must include all contact information from the profile snapshot (name, email, phone, location, LinkedIn, GitHub, portfolio, headline).
+6. Summary must contain no more than 2 sentences (ideally exactly 2) that highlight quantified wins backed by the profile data.
+7. Experience entries must reference real employers, roles, and outcomes drawn ONLY from the profile; keep standalone project work in the projects section instead of experience.
+8. Add a "projects" section when the profile mentions notable initiatives, using objects { title, description?, impact?, link?, dates? }. Omit the section if no projects exist.
+9. Skills should be a concise list of up to 12 items derived ONLY from the profile (not the job description), selecting those most relevant to the target role.
+10. Education should capture degrees, institutions, dates, and highlights exactly as provided in the profile.
+11. Certifications/Achievements should be listed if present in the profile under "Certifications/Achievements".
+12. Omit sections you cannot substantiate from the profile rather than fabricating content.
 `;
-  const avgChunkSize = 600; // Conservative estimate
-  const safeChunkLimit = calculateMaxChunks({
-    systemPrompt,
-    jobDescription: job.text + instructions,
-    avgChunkSize,
-    overhead: 100,
-  });
 
-  console.log("[RiseAI] Token budget analysis:", {
-    requestedChunks: chunkLimit,
-    safeChunkLimit,
-    systemTokens: estimateTokens(systemPrompt),
-    jobTokens: estimateTokens(job.text),
-    limit: GEMINI_NANO_LIMITS.PER_PROMPT,
-  });
-
-  // Use the smaller of requested or safe limit
-  const effectiveLimit = Math.min(chunkLimit, Math.max(1, safeChunkLimit));
-
-  let relevantChunks;
-
-  if (USE_DUMMY_DATA) {
-    console.log("[RiseAI] Using DUMMY John Doe data for testing");
-    relevantChunks = DUMMY_JOHN_DOE_CHUNKS.slice(0, Math.min(effectiveLimit, 3));
-  } else {
-    relevantChunks = await findRelevantChunks({
-      jobDescription: job.text,
-      limit: effectiveLimit,
-    });
-
-    if (!relevantChunks.length) {
-      throw new Error(
-        "No qualification context available. Add PDFs or text snippets in the Setup tab first."
-      );
-    }
+  const profile = context?.profile;
+  if (!profile) {
+    throw new Error("Profile details are missing. Add your profile in the Profile tab before generating.");
   }
 
-  let selectedChunks = [...relevantChunks];
-  let userPrompt = composeUserPrompt({ jobText: job.text, chunks: selectedChunks, instructions });
-
-  // Final token validation with adaptive chunk trimming
-  let tokenCount = calculatePromptTokens({ systemPrompt, userPrompt });
-
-  while (
-    tokenCount.total > GEMINI_NANO_LIMITS.PER_PROMPT &&
-    selectedChunks.length > 1
-  ) {
-    selectedChunks = selectedChunks.slice(0, -1);
-    userPrompt = composeUserPrompt({ jobText: job.text, chunks: selectedChunks, instructions });
-    tokenCount = calculatePromptTokens({ systemPrompt, userPrompt });
-    console.warn("[RiseAI] Prompt tokens above limit, dropping last context chunk", {
-      remainingChunks: selectedChunks.length,
-      tokens: tokenCount.total,
-      limit: GEMINI_NANO_LIMITS.PER_PROMPT,
-    });
+  const profileSnapshot = buildProfileSnapshot(profile);
+  if (!profileSnapshot.trim()) {
+    throw new Error("Profile details are incomplete. Add experiences, education, projects, or skills before generating.");
   }
 
-  if (!selectedChunks.length) {
-    throw new Error("Unable to compose prompt within token limits. Try removing large context files and retry.");
-  }
+  const userPrompt = composeUserPrompt({ jobText: job.text, profileSnapshot, instructions });
+  const tokenCount = calculatePromptTokens({ systemPrompt, userPrompt });
+  const totalTokens = tokenCount.total ?? estimateTokens(systemPrompt) + estimateTokens(userPrompt);
 
-  console.log("[RiseAI] Final prompt tokens:", {
+  console.log("[RiseAI] Prompt composition complete:", {
     system: tokenCount.systemTokens,
     user: tokenCount.userTokens,
-    total: tokenCount.total,
-    chunksUsed: selectedChunks.length,
-    underLimit: tokenCount.total <= GEMINI_NANO_LIMITS.PER_PROMPT,
+    total: totalTokens,
   });
 
-  if (tokenCount.total > GEMINI_NANO_LIMITS.PER_PROMPT) {
-    console.warn("[RiseAI] Prompt exceeds token limit!", {
-      tokens: tokenCount.total,
-      limit: GEMINI_NANO_LIMITS.PER_PROMPT,
-      overage: tokenCount.total - GEMINI_NANO_LIMITS.PER_PROMPT,
-    });
+  if (totalTokens > GEMINI_NANO_LIMITS.PER_PROMPT) {
+    console.warn(
+      "[RiseAI] resume prompt tokens exceed on-device guideline; proceeding anyway.",
+      { totalTokens, limit: GEMINI_NANO_LIMITS.PER_PROMPT }
+    );
   }
 
   return {
@@ -173,11 +202,11 @@ INSTRUCTIONS:
     userPrompt,
     metadata: {
       job,
-      context,
-      chunkIds: selectedChunks.map((chunk) => chunk.id),
-      tokenCount,
-      chunksUsed: selectedChunks.length,
-      chunksRequested: chunkLimit,
+      profile,
+      tokenCount: {
+        ...tokenCount,
+        total: totalTokens,
+      },
     },
   };
 };

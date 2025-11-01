@@ -77,6 +77,219 @@ const formatLetterHtml = (text = "") => {
   return `<div class="preview-letter">${markup}</div>`;
 };
 
+const COMPANY_HINTS = [
+  "inc",
+  "llc",
+  "ltd",
+  "limited",
+  "company",
+  "corporation",
+  "corp",
+  "gmbh",
+  "technologies",
+  "labs",
+  "systems",
+  "solutions",
+  "group",
+  "agency",
+  "partners",
+  "studios",
+  "holdings",
+  "enterprise",
+  "enterprises",
+  "university",
+  "college",
+  "school",
+  "bank",
+  "media",
+  "works",
+];
+
+const ROLE_HINTS = [
+  "engineer",
+  "developer",
+  "designer",
+  "manager",
+  "lead",
+  "specialist",
+  "consultant",
+  "scientist",
+  "architect",
+  "analyst",
+  "product",
+  "marketing",
+  "sales",
+  "operations",
+  "program",
+  "project",
+  "director",
+  "principal",
+  "administrator",
+  "coordinator",
+  "executive",
+  "producer",
+  "writer",
+  "researcher",
+  "strategist",
+  "officer",
+  "advisor",
+  "intern",
+];
+
+const cleanTextValue = (value = "") =>
+  `${value ?? ""}`.replace(/\s+/g, " ").replace(/[–—]/g, "-").trim();
+
+const looksLikeCompany = (line = "") =>
+  COMPANY_HINTS.some((hint) => line.toLowerCase().includes(hint));
+
+const looksLikeRole = (line = "") =>
+  ROLE_HINTS.some((hint) => new RegExp(`\\b${hint}\\b`, "i").test(line));
+
+const sanitizeLabelValue = (line = "", labelPattern) => {
+  const match = line.match(labelPattern);
+  if (!match) return "";
+  return cleanTextValue(match[1]);
+};
+
+const extractJobMetadata = (text = "") => {
+  const normalized = `${text}`.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return { title: "", company: "", reference: "" };
+  }
+
+  const lines = normalized
+    .split(/\n+/)
+    .map((line) => cleanTextValue(line))
+    .filter(Boolean)
+    .slice(0, 12);
+
+  let title = "";
+  let company = "";
+
+  for (const line of lines) {
+    if (!title) {
+      const titleMatch = sanitizeLabelValue(line, /^(?:role|position|title)\s*[:\-]\s*(.+)$/i);
+      if (titleMatch) {
+        title = titleMatch;
+      }
+    }
+    if (!company) {
+      const companyMatch = sanitizeLabelValue(line, /^(?:company|employer|organisation|organization)\s*[:\-]\s*(.+)$/i);
+      if (companyMatch) {
+        company = companyMatch;
+      }
+    }
+    if (title && company) break;
+  }
+
+  if (!title || !company) {
+    for (const line of lines) {
+      const atMatch = line.match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
+      if (atMatch) {
+        const left = cleanTextValue(atMatch[1]);
+        const right = cleanTextValue(atMatch[2]);
+        if (!title && looksLikeRole(left)) {
+          title = left;
+        }
+        if (!company && looksLikeCompany(right)) {
+          company = right;
+        }
+        if (!company && title && right) {
+          company = right;
+        }
+        if (!title && company && left) {
+          title = left;
+        }
+        if (title && company) break;
+      }
+    }
+  }
+
+  if (!title || !company) {
+    for (const line of lines) {
+      if (!title && looksLikeRole(line)) {
+        title = line;
+      }
+      if (!company && looksLikeCompany(line)) {
+        company = line;
+      }
+      if (title && company) break;
+    }
+  }
+
+  if (!title && lines.length) {
+    title = lines[0];
+  }
+
+  title = cleanTextValue(title);
+  company = cleanTextValue(company);
+
+  const reference = title
+    ? `Application for ${title}${company ? ` at ${company}` : ""}`
+    : company
+    ? `Application for a role at ${company}`
+    : "";
+
+  return { title, company, reference };
+};
+
+const composeResumeTitle = (resume, job) => {
+  const fullName = cleanTextValue(resume?.header?.fullName ?? "");
+
+  // Extract job metadata from job description text
+  let jobTitle = "";
+  let company = "";
+
+  if (job?.text) {
+    const metadata = extractJobMetadata(job.text);
+    jobTitle = metadata.title;
+    company = metadata.company;
+  }
+
+  // Build title based on available information
+  if (fullName && jobTitle && company) {
+    return `${fullName} — ${jobTitle} at ${company}`;
+  }
+  if (fullName && jobTitle) {
+    return `${fullName} — ${jobTitle}`;
+  }
+  if (fullName && company) {
+    return `${fullName} — ${company}`;
+  }
+  if (fullName) {
+    return `${fullName} — Tailored Resume`;
+  }
+  if (jobTitle && company) {
+    return `${jobTitle} at ${company}`;
+  }
+  if (jobTitle) {
+    return jobTitle;
+  }
+
+  return "Tailored Resume";
+};
+
+const extractCoverLetterTitle = (text = "") => {
+  const normalized = `${text}`.replace(/\r\n/g, "\n").trim();
+  const lines = normalized.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+
+  // Look for RE: line in the first few lines
+  for (let i = 0; i < Math.min(3, lines.length); i++) {
+    const line = lines[i];
+    if (line.toLowerCase().startsWith("re:")) {
+      // Extract everything after "RE:" and trim
+      return cleanTextValue(line.substring(3).trim());
+    }
+  }
+
+  return "Cover Letter";
+};
+
+const composeCoverLetterTitle = (letterText = "") => {
+  const extracted = extractCoverLetterTitle(letterText);
+  return extracted;
+};
+
 
 
 class PanelApp {
@@ -369,11 +582,20 @@ class PanelApp {
       timestamp: new Date().toISOString(),
     });
     const job = payload.job ?? null;
+    let enriched = job;
     if (job) {
-      this.jobController.hydrate(job);
+      const hasReference = job.reference && job.reference.trim().length;
+      enriched =
+        hasReference && job.title
+          ? job
+          : {
+              ...job,
+              ...extractJobMetadata(job.text ?? ""),
+            };
+      this.jobController.hydrate(enriched);
     }
     this.updateGenerateButtonState();
-    return job;
+    return enriched;
   }
 
   async commitJobDescription(text, source) {
@@ -385,11 +607,30 @@ class PanelApp {
     }
 
     this.jobBadge.set("Saving job description...", "info");
-    const payload = { text: trimmed, source: source || "manual" };
+    const metadata = extractJobMetadata(trimmed);
+    const payload = {
+      text: trimmed,
+      source: source || "manual",
+      title: metadata.title,
+      company: metadata.company,
+      reference: metadata.reference,
+    };
 
     try {
       const response = await runtimeApi.send("rise:jd:update", payload);
-      const savedJob = response?.payload?.job ?? payload;
+      const savedJob = response?.payload?.job ?? {
+        ...payload,
+        updatedAt: Date.now(),
+      };
+      if (!savedJob.reference) {
+        savedJob.reference = metadata.reference;
+      }
+      if (!savedJob.title) {
+        savedJob.title = metadata.title;
+      }
+      if (!savedJob.company) {
+        savedJob.company = metadata.company;
+      }
       this.jobController.hydrate(savedJob);
       this.jobBadge.set("Job description saved.", "success");
       return savedJob;
@@ -485,9 +726,14 @@ class PanelApp {
 
       const resume = result.resume ?? null;
       const timestamp = Date.now();
-      const resumeTitle = resume?.header?.fullName
-        ? `${resume.header.fullName} - Resume`
-        : 'Resume generated';
+      const jobMeta = this.jobController.currentJob ?? {};
+
+      // Use generated title if available, otherwise compose one
+      let resumeTitle = result.generatedTitle;
+      if (!resumeTitle || !resumeTitle.trim()) {
+        resumeTitle = composeResumeTitle(resume, jobMeta);
+      }
+
       const entry = {
         id: `resume-${timestamp}`,
         title: resumeTitle,
@@ -497,8 +743,9 @@ class PanelApp {
         updatedAt: new Date(timestamp).toLocaleString(),
         resume,
         metadata: result.metadata ?? null,
-        rawText: result.rawText ?? '',
+        rawText: result.rawText ?? "",
         editedHtml: null,
+        jobReference: jobMeta?.reference ?? null,
       };
       console.info("[RiseAI] resume generation succeeded", {
         finishReason: result.metadata?.finishReason ?? null,
@@ -578,21 +825,23 @@ class PanelApp {
       }
 
       const timestamp = Date.now();
+      const jobMeta = this.jobController.currentJob ?? {};
       const letterHtml = formatLetterHtml(letterText);
       const entry = {
         id: `letter-${timestamp}`,
         type: "cover-letter",
-        title: "Cover Letter generated",
+        title: composeCoverLetterTitle(letterText),
         createdAtMs: timestamp,
         createdAt: new Date(timestamp).toLocaleString(),
         updatedAtMs: timestamp,
         updatedAt: new Date(timestamp).toLocaleString(),
-        letterText,
+        letterText: letterText,
         letterHtml,
         metadata: result.metadata ?? null,
         rawText: result.rawText ?? letterText,
         resume: null,
         editedHtml: null,
+        jobReference: jobMeta?.reference ?? null,
       };
       const saved = await this.history.add(entry);
       await this.previewOverlay.open(saved);

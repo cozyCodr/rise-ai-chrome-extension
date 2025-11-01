@@ -1,0 +1,25 @@
+# Development notes
+current-context.md
+plan.md
+todo.md
+
+# Internal documentation
+EDITORJS_FALLBACK_FIX.md
+EDITORJS_INTEGRATION.md
+REAL_EDITORJS_INTEGRATION.md
+TESTING_EDITORJS.md
+
+# Temporary files
+TEMP_*.txt
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log

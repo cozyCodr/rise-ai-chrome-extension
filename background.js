@@ -93,6 +93,9 @@ registerHandler("rise:jd:update", async (payload = {}, sender) => {
     text: payload.text ?? "",
     source: payload.source ?? "auto",
     updatedAt: Date.now(),
+    title: payload.title ?? "",
+    company: payload.company ?? "",
+    reference: payload.reference ?? "",
   };
   await setJobState(job);
   notifyTab(sender.tab?.id, { type: "rise:update-jd", payload: { job } });
@@ -114,22 +117,44 @@ registerHandler("rise:gemini:reset", async () => {
   return { type: "rise:gemini:reset", payload: result };
 });
 
-const parseResumeJson = (text = "") => {
+const extractTitleAndJson = (text = "") => {
   if (!text) throw new Error("Gemini returned an empty response.");
-  const direct = text.trim();
+  const trimmed = text.trim();
+
+  // Extract title if present (format: "title::Company Name Resume - John Doe")
+  let title = null;
+  let jsonText = trimmed;
+
+  const titleMatch = trimmed.match(/^title::(.+?)(?:\n|$)/);
+  if (titleMatch) {
+    title = titleMatch[1].trim();
+    // Remove the title line from the text
+    jsonText = trimmed.substring(titleMatch[0].length).trim();
+  }
+
+  // Parse JSON
+  let resume;
   try {
-    return JSON.parse(direct);
+    resume = JSON.parse(jsonText);
   } catch (error) {
     const fenceMatch =
-      direct.match(/```json\s*([\s\S]*?)```/) ||
-      direct.match(/```([\s\S]*?)```/) ||
-      direct.match(/\{[\s\S]*\}/);
+      jsonText.match(/```json\s*([\s\S]*?)```/) ||
+      jsonText.match(/```([\s\S]*?)```/) ||
+      jsonText.match(/\{[\s\S]*\}/);
     if (fenceMatch) {
       const jsonCandidate = fenceMatch[1] ?? fenceMatch[0];
-      return JSON.parse(jsonCandidate);
+      resume = JSON.parse(jsonCandidate);
+    } else {
+      throw error;
     }
-    throw error;
   }
+
+  return { title, resume };
+};
+
+const parseResumeJson = (text = "") => {
+  const { resume } = extractTitleAndJson(text);
+  return resume;
 };
 
 registerHandler("rise:generator:resume", async (payload = {}) => {
@@ -152,12 +177,13 @@ registerHandler("rise:generator:resume", async (payload = {}) => {
     throw new Error("Gemini returned an empty response.");
   }
 
-  const resume = parseResumeJson(generation.text);
+  const { title, resume } = extractTitleAndJson(generation.text);
 
   return {
     type: "rise:generator:resume",
     payload: {
       resume,
+      generatedTitle: title,
       metadata: {
         prompt,
         finishReason: generation?.finishReason ?? null,

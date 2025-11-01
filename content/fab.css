@@ -5,27 +5,30 @@
   min-width: 56px;
   height: 56px;
   padding: 0 20px;
-  border-radius: 999px;
-  background: linear-gradient(135deg, #5a3dfb, #12c2e9);
-  color: white;
+  border-radius: 12px;
+  background: #ffffff;
+  background-color: #ffffff;
+  color: #1a1a1a;
+  border: 1px solid #d1d5db;
   font: 500 16px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   display: flex;
   align-items: center;
   gap: 12px;
-  box-shadow: 0 10px 30px rgba(17, 17, 26, 0.35);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
   user-select: none;
 }
 
 #rise-ai-fab:hover {
   transform: translateY(-2px);
-  box-shadow: 0 14px 34px rgba(17, 17, 26, 0.4);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+  border-color: #9ca3af;
 }
 
 #rise-ai-fab:active {
   transform: translateY(0);
-  box-shadow: 0 8px 24px rgba(17, 17, 26, 0.35);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .rise-ai-fab__icon {
@@ -41,5 +44,8 @@
 }
 
 #rise-ai-fab.rise-ai-fab--active {
-  background: linear-gradient(135deg, #12c2e9, #f64f59);
+  background: #f5f5f5;
+  background-color: #f5f5f5;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border-color: #9ca3af;
 }

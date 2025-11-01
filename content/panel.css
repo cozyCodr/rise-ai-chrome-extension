@@ -16,30 +16,35 @@
   inset: auto 28px 28px auto;
   width: 64px;
   height: 64px;
-  border-radius: 50%;
-  background: #0f0f10;
-  color: #f8f8f9;
+  border-radius: 12px;
+  background: white;
+  color: #1a1a1a;
+  border: 1px solid #d1d5db;
   font: 600 16px/1 "Inter", "Segoe UI", system-ui, sans-serif;
   letter-spacing: 0.04em;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 16px 32px rgba(5, 5, 6, 0.28);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   cursor: pointer;
-  transition: transform 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, background 0.25s ease, border-color 0.25s ease;
 }
 
 .rise-ai-fab:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 22px 40px rgba(5, 5, 6, 0.32);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+  border-color: #9ca3af;
 }
 
 .rise-ai-fab:active {
-  transform: translateY(-1px);
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .rise-ai-fab--active {
-  background: #222426;
+  background: #f5f5f5;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border-color: #9ca3af;
 }
 
 .rise-ai-panel {

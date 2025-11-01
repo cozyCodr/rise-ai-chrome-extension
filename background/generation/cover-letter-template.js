@@ -5,6 +5,8 @@ const BASE_SYSTEM_PROMPT = `You are Rise AI, an on-device assistant that drafts 
 - Use only the candidate information provided in the PROFILE SNAPSHOT.
 - Treat the job description as context about the role, not as the candidate's experience.
 - Never claim the candidate performed tasks that appear only in the job description.
+- CRITICAL: Do NOT include any placeholder fields, brackets, or instructions like "[insert X]" or "if applicable". Write complete, final text only.
+- CRITICAL: Do NOT mention where the job was posted or add any external references not in the profile snapshot.
 - Produce a polished, plain-text letter with multiple short paragraphs.
 - Address the reader respectfully and close with a confident sign-off.`;
 
@@ -92,13 +94,15 @@ export const buildCoverLetterPrompt = async () => {
   const instructions = `
 
 COVER LETTER REQUIREMENTS:
-1. Address the letter to "Hiring Manager" if no name is provided.
-2. Begin with a compelling opening that references the target role.
-3. Highlight the most relevant achievements from the profile snapshot.
-4. Mention a specific reason the role/company is appealing, using wording inspired by the job description without copying responsibilities.
-5. Close with confidence, including a call to action and professional sign-off.
-6. Keep the tone warm, professional, and concise (3-5 short paragraphs).
-7. Output only the cover letter text (no JSON, no markdown fences).`;
+1. Start with "Dear Hiring Manager," on the first line.
+2. On the second line (as a separate paragraph), write "RE:" followed by a concise, professional reference to the specific role and company from the job description. Keep this under 15 words. Example: "RE: Application for Senior Front-End Engineer at Playmerce"
+3. In the body paragraphs, highlight the most relevant achievements from the profile snapshot that align with the role.
+4. Express genuine interest in the role/company using wording inspired by the job description without copying responsibilities.
+5. Do NOT include placeholder text like "[Platform where you saw the job posting]" or "[insert X]" or "if applicable" - write final, complete text only.
+6. Do NOT mention how or where the candidate found the job posting.
+7. Close with confidence, including a call to action and professional sign-off.
+8. Keep the tone warm, professional, and concise (3-5 short paragraphs total, including the RE line).
+9. Output only the cover letter text (no JSON, no markdown fences, no extra formatting, no placeholders).`;
 
   const userPrompt = `JOB DESCRIPTION (context only):
 ${job.text}
